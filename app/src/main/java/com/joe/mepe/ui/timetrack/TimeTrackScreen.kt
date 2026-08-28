@@ -1,0 +1,577 @@
+package com.joe.mepe.ui.timetrack
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import com.joe.mepe.data.DataBus
+import com.joe.mepe.data.FocusSession
+import com.joe.mepe.data.Repos
+import com.joe.mepe.data.TimeRecord
+import com.joe.mepe.data.TimeTag
+import com.joe.mepe.ui.BarChart
+import com.joe.mepe.ui.ColorDot
+import com.joe.mepe.ui.ColorPickerDialog
+import com.joe.mepe.ui.DonutChart
+import com.joe.mepe.ui.EmptyHint
+import com.joe.mepe.ui.LabeledField
+import com.joe.mepe.ui.PieSlice
+import com.joe.mepe.ui.ProgressRing
+import com.joe.mepe.ui.QuickLinks
+import com.joe.mepe.ui.Routes
+import com.joe.mepe.ui.ScreenHeader
+import com.joe.mepe.ui.SectionCard
+import com.joe.mepe.ui.StatRow
+import com.joe.mepe.ui.Stepper
+import com.joe.mepe.ui.ToggleRow
+import com.joe.mepe.ui.rememberData
+import com.joe.mepe.ui.theme.parseHexColor
+import kotlinx.coroutines.delay
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
+
+// ============ 番茄钟引擎（页面切换不丢状态） ============
+
+/** 番茄钟阶段：0=专注 1=短休 2=长休，参数键与桌面端一致 */
+object PomodoroEngine {
+    var running by mutableStateOf(false)
+    var paused by mutableStateOf(false)
+    var phase by mutableStateOf(0)
+    var startEpochMs by mutableStateOf(0L)
+    var accumulatedMs by mutableStateOf(0L)
+    var completedRounds by mutableStateOf(0)
+
+    var workMinutes by mutableStateOf(25)
+    var shortMinutes by mutableStateOf(5)
+    var longMinutes by mutableStateOf(15)
+    var beforeLong by mutableStateOf(4)
+    var autoStartBreaks by mutableStateOf(true)
+    var autoStartPomodoros by mutableStateOf(false)
+
+    fun loadSettings() {
+        workMinutes = Repos.getSetting("PomodoroWorkMinutes", "25").toIntOrNull()?.coerceAtLeast(1) ?: 25
+        shortMinutes = Repos.getSetting("PomodoroShortBreakMinutes", "5").toIntOrNull()?.coerceAtLeast(1) ?: 5
+        longMinutes = Repos.getSetting("PomodoroLongBreakMinutes", "15").toIntOrNull()?.coerceAtLeast(1) ?: 15
+        beforeLong = Repos.getSetting("PomodoroBeforeLongBreak", "4").toIntOrNull()?.coerceAtLeast(1) ?: 4
+        autoStartBreaks = Repos.getSetting("PomodoroAutoStartBreaks", "1") == "1"
+        autoStartPomodoros = Repos.getSetting("PomodoroAutoStartPomodoros", "0") == "1"
+    }
+
+    fun saveSettings() {
+        Repos.setSetting("PomodoroWorkMinutes", workMinutes.toString())
+        Repos.setSetting("PomodoroShortBreakMinutes", shortMinutes.toString())
+        Repos.setSetting("PomodoroLongBreakMinutes", longMinutes.toString())
+        Repos.setSetting("PomodoroBeforeLongBreak", beforeLong.toString())
+        Repos.setSetting("PomodoroAutoStartBreaks", if (autoStartBreaks) "1" else "0")
+        Repos.setSetting("PomodoroAutoStartPomodoros", if (autoStartPomodoros) "1" else "0")
+    }
+
+    fun segmentMinutes(): Int = when (phase) { 0 -> workMinutes; 1 -> shortMinutes; else -> longMinutes }
+
+    fun elapsedMs(): Long = when {
+        !running || paused -> accumulatedMs
+        else -> accumulatedMs + (System.currentTimeMillis() - startEpochMs)
+    }
+
+    fun remainingMs(): Long = (segmentMinutes() * 60_000L - elapsedMs()).coerceAtLeast(0)
+
+    fun beginSegment() {
+        running = true; paused = false
+        startEpochMs = System.currentTimeMillis()
+        accumulatedMs = 0L
+    }
+
+    fun start() {
+        if (!running) beginSegment()
+        else if (paused) { paused = false; startEpochMs = System.currentTimeMillis() }
+    }
+
+    fun pause() {
+        if (running && !paused) {
+            accumulatedMs += System.currentTimeMillis() - startEpochMs
+            paused = true
+        }
+    }
+
+    /** 界面 tick 时检查段是否走完；返回刚完成的专注段分钟数（记一次专注） */
+    fun onTick(): Int? {
+        if (!running || paused) return null
+        if (remainingMs() > 0L) return null
+        val wasWork = phase == 0
+        var savedMinutes: Int? = null
+        if (wasWork) {
+            completedRounds += 1
+            savedMinutes = workMinutes
+            Repos.addFocus(
+                FocusSession(
+                    mode = 1,
+                    duration = java.time.Duration.ofMinutes(workMinutes.toLong()),
+                    startTime = LocalDateTime.now().minusMinutes(workMinutes.toLong()),
+                    endTime = LocalDateTime.now(),
+                    isCompleted = true,
+                    notes = "番茄钟"
+                )
+            )
+            phase = if (completedRounds % beforeLong == 0) 2 else 1
+            if (autoStartBreaks) beginSegment() else stop()
+        } else {
+            phase = 0
+            if (autoStartPomodoros) beginSegment() else stop()
+        }
+        return savedMinutes
+    }
+
+    fun skip() {
+        if (!running) return
+        if (phase == 0) {
+            completedRounds += 1
+            phase = if (completedRounds % beforeLong == 0) 2 else 1
+        } else phase = 0
+        if ((phase == 0 && autoStartPomodoros) || (phase != 0 && autoStartBreaks)) beginSegment()
+        else stop()
+    }
+
+    fun stop() { running = false; paused = false; accumulatedMs = 0L }
+}
+
+fun fmtMs(ms: Long): String {
+    val total = (ms / 1000L).coerceAtLeast(0)
+    return "%02d:%02d".format(total / 60, total % 60)
+}
+
+fun fmtMinutes(min: Long): String = if (min >= 60) "${min / 60}小时${min % 60}分" else "${min}分钟"
+
+// ============ 页面 ============
+
+/** 时间页：运行中计时条 + 番茄钟 + 标签一键计时（带颜色） + 今日记录 + 分布图，整体可滚动 */
+@Composable
+fun TimeTrackScreen(nav: (String) -> Unit) {
+    var tick by remember { mutableIntStateOf(0) }
+    var editingTag by remember { mutableStateOf<TimeTag?>(null) }
+    var addingTag by remember { mutableStateOf(false) }
+    var showPomoSettings by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        PomodoroEngine.loadSettings()
+        while (true) { delay(500); PomodoroEngine.onTick(); tick++ }
+    }
+
+    val rev = DataBus.rev
+    val today = LocalDate.now()
+    val tags = remember(rev) { Repos.timeTags() }
+    val running = remember(rev, tick) { Repos.runningRecord() }
+    val records = remember(rev) { Repos.timeRecords() }
+
+    val todayRecords = records.filter { it.date == today.toString() && it.endTime != null }
+    val todayTotalMin = todayRecords.sumOf { it.minutes() }
+    val runningTag = running?.let { r -> tags.find { it.id == r.tagId } }
+
+    val fallbackColor = MaterialTheme.colorScheme.primary
+    val distSlices = remember(rev) {
+        tags.map { t ->
+            PieSlice(
+                t.name, todayRecords.filter { it.tagId == t.id }.sumOf { it.minutes() }.toDouble(),
+                parseHexColor(t.color, fallbackColor)
+            )
+        }.filter { it.value > 0 }
+    }
+    val weekDays = (6 downTo 0).map { today.minusDays(it.toLong()) }
+    val weekTotals = remember(rev) {
+        weekDays.map { d -> records.filter { it.date == d.toString() && it.endTime != null }.sumOf { it.minutes() }.toDouble() }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader(
+            title = "时间",
+            icon = Icons.Filled.Timer,
+            subtitle = if (running != null) "正在计时" else "点标签开始计时",
+            actions = { QuickLinks(Routes.TIME, nav) }
+        )
+
+        StatRow(listOf(
+            Triple("今日计时", fmtMinutes(todayTotalMin), null),
+            Triple("今日记录", "${todayRecords.size} 条", null),
+            Triple("番茄钟", "${PomodoroEngine.completedRounds} 轮", null),
+        ))
+
+        LazyColumn(Modifier.fillMaxSize()) {
+            // 运行中计时条
+            if (running != null && runningTag != null) {
+                item(key = "running") {
+                    val elapsed = ChronoUnit.SECONDS.between(running.startTime, LocalDateTime.now())
+                    SectionCard {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            ColorDot(parseHexColor(runningTag.color, MaterialTheme.colorScheme.primary), sizeDp = 14)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("正在计时 · ${runningTag.name}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "已计时 %02d:%02d:%02d".format(elapsed / 3600, elapsed % 3600 / 60, elapsed % 60),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = { Repos.stopTimer(running.tagId) },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                                shape = MaterialTheme.shapes.small
+                            ) {
+                                Icon(Icons.Filled.Stop, null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("停止")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 番茄钟
+            item(key = "pomodoro") { PomodoroCard(onOpenSettings = { showPomoSettings = true }) }
+
+            // 时间标签
+            item(key = "sec_tags") {
+                SectionLabelRow("时间标签", "点击开始计时") {
+                    TextButton(onClick = { addingTag = true }) { Text("＋ 新标签") }
+                }
+            }
+            if (tags.isEmpty()) {
+                item(key = "no_tags") { EmptyHint("暂无标签，点右上角添加", Icons.Filled.Timer) }
+            }
+            items(tags.size, key = { "tag${tags[it].id}" }) { i ->
+                val t = tags[i]
+                val isRunning = running?.tagId == t.id
+                val mins = todayRecords.filter { it.tagId == t.id }.sumOf { it.minutes() }
+                TagRow(
+                    tag = t, isRunning = isRunning, todayMinutes = mins,
+                    onToggle = { if (isRunning) Repos.stopTimer(t.id) else Repos.startTimer(t.id) },
+                    onEdit = { editingTag = t },
+                    onDelete = { Repos.deleteTimeTag(t.id) },
+                )
+            }
+
+            // 今日记录
+            item(key = "sec_records") { SectionLabelRow("今日记录", null, null) }
+            if (todayRecords.isEmpty()) {
+                item(key = "no_records") { EmptyHint("今天还没有计时记录") }
+            }
+            items(todayRecords.size, key = { "r${todayRecords[it].id}" }) { i ->
+                val r = todayRecords[i]
+                val t = tags.find { it.id == r.tagId }
+                RecordRow(r, t?.name ?: "未知", parseHexColor(t?.color, MaterialTheme.colorScheme.primary)) {
+                    Repos.deleteTimeRecord(r.id)
+                }
+            }
+
+            // 分布图
+            if (distSlices.isNotEmpty()) {
+                item(key = "sec_dist") { SectionLabelRow("今日时间分布", null, null) }
+                item(key = "chart_dist") {
+                    SectionCard { DonutChart(slices = distSlices, centerText = fmtMinutes(todayTotalMin)) }
+                }
+            }
+            if (weekTotals.any { it > 0 }) {
+                item(key = "sec_week") { SectionLabelRow("近 7 日计时", null, null) }
+                item(key = "chart_week") {
+                    SectionCard {
+                        BarChart(
+                            values = weekTotals,
+                            labels = weekDays.map { "${it.monthValue}/${it.dayOfMonth}" },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+            item(key = "tail") { Spacer(Modifier.height(96.dp)) }
+        }
+    }
+
+    if (addingTag || editingTag != null) {
+        TimeTagEditDialog(initial = editingTag, onClose = { addingTag = false; editingTag = null })
+    }
+    if (showPomoSettings) PomodoroSettingsDialog(onClose = { showPomoSettings = false })
+}
+
+@Composable
+private fun SectionLabelRow(text: String, sub: String?, action: (@Composable () -> Unit)?) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(text, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (sub != null) Text(sub, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+        }
+        action?.invoke()
+    }
+}
+
+/** 番茄钟卡片：大进度环 + 阶段色 + 控制 */
+@Composable
+private fun PomodoroCard(onOpenSettings: () -> Unit) {
+    val running = PomodoroEngine.running
+    val paused = PomodoroEngine.paused
+    val phase = PomodoroEngine.phase
+    val remaining = PomodoroEngine.remainingMs()
+    val total = (PomodoroEngine.segmentMinutes() * 60_000L).coerceAtLeast(1)
+    val progress = 1.0 - remaining.toDouble() / total
+    val phaseName = when (phase) { 0 -> "专注"; 1 -> "短休息"; else -> "长休息" }
+    val phaseColor = when (phase) {
+        0 -> MaterialTheme.colorScheme.primary
+        1 -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.secondary
+    }
+    SectionCard {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("番茄钟", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "第 ${PomodoroEngine.completedRounds + if (phase == 0 && running) 1 else 0} 轮",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onOpenSettings, modifier = Modifier.size(30.dp)) {
+                Icon(Icons.Filled.Settings, "番茄钟设置", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ProgressRing(
+                progress = progress, sizeDp = 150, stroke = 12f, color = phaseColor,
+                centerContent = {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            if (!running) "未开始" else if (paused) "已暂停" else fmtMs(remaining),
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (running && !paused) phaseColor else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(phaseName, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            )
+            Spacer(Modifier.width(16.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        if (!running || paused) PomodoroEngine.start() else PomodoroEngine.pause()
+                    },
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.width(104.dp)
+                ) {
+                    Icon(if (running && !paused) Icons.Filled.Pause else Icons.Filled.PlayArrow, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(when { !running -> "开始"; paused -> "继续"; else -> "暂停" })
+                }
+                OutlinedButton(
+                    onClick = { PomodoroEngine.skip() },
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.width(104.dp),
+                    enabled = running
+                ) {
+                    Icon(Icons.Filled.SkipNext, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("跳过")
+                }
+                OutlinedButton(
+                    onClick = { PomodoroEngine.stop() },
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.width(104.dp),
+                    enabled = running,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Icon(Icons.Filled.Stop, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("重置")
+                }
+            }
+        }
+    }
+}
+
+/** 单个时间标签行 */
+@Composable
+private fun TagRow(
+    tag: TimeTag,
+    isRunning: Boolean,
+    todayMinutes: Long,
+    onToggle: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val color = parseHexColor(tag.color, MaterialTheme.colorScheme.primary)
+    SectionCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ColorDot(color, sizeDp = 14)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(tag.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                Text(
+                    "今日 ${fmtMinutes(todayMinutes)}" + if (tag.isPreset) " · 预置" else "",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                "编辑", Modifier.clickable(onClick = onEdit).padding(horizontal = 6.dp),
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                "删除", Modifier.clickable(onClick = onDelete).padding(horizontal = 6.dp),
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error
+            )
+            Spacer(Modifier.width(4.dp))
+            Button(
+                onClick = onToggle,
+                shape = MaterialTheme.shapes.small,
+                colors = if (isRunning) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                else ButtonDefaults.buttonColors()
+            ) {
+                Icon(if (isRunning) Icons.Filled.Stop else Icons.Filled.PlayArrow, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(if (isRunning) "停止" else "计时")
+            }
+        }
+    }
+}
+
+/** 单条计时记录行 */
+@Composable
+private fun RecordRow(r: TimeRecord, tagName: String, color: Color, onDelete: () -> Unit) {
+    SectionCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ColorDot(color, sizeDp = 12)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(tagName, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Text(
+                    "${r.startTime.format(DateTimeFormatter.ofPattern("HH:mm"))} - " +
+                        (r.endTime?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "进行中"),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(fmtMinutes(r.minutes()), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Filled.Delete, "删除", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(16.dp))
+            }
+        }
+    }
+}
+
+/** 时间标签编辑：名称 + 自定义颜色 + 备注 */
+@Composable
+private fun TimeTagEditDialog(initial: TimeTag?, onClose: () -> Unit) {
+    var name by remember { mutableStateOf(initial?.name ?: "") }
+    var colorHex by remember { mutableStateOf(initial?.color ?: "#4F6EF7") }
+    var notes by remember { mutableStateOf(initial?.notes ?: "") }
+    var picking by remember { mutableStateOf(false) }
+
+    Dialog(onDismissRequest = onClose) {
+        Card(shape = MaterialTheme.shapes.large) {
+            Column(Modifier.padding(16.dp)) {
+                Text(if (initial == null) "新时间标签" else "编辑标签", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(10.dp))
+                LabeledField("标签名称", name, { name = it })
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(36.dp)
+                            .background(parseHexColor(colorHex, MaterialTheme.colorScheme.primary), CircleShape)
+                            .clickable { picking = true }
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text("点击色块选择颜色（可自定义）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.height(8.dp))
+                LabeledField("备注（可选）", notes, { notes = it })
+                Spacer(Modifier.height(14.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onClose) { Text("取消") }
+                    Button(
+                        onClick = {
+                            if (name.isBlank()) return@Button
+                            if (initial == null) Repos.addTimeTag(TimeTag(name = name.trim(), color = colorHex, notes = notes.ifBlank { null }))
+                            else Repos.updateTimeTag(initial.apply { this.name = name.trim(); this.color = colorHex; this.notes = notes.ifBlank { null } })
+                            onClose()
+                        },
+                        enabled = name.isNotBlank()
+                    ) { Text("保存") }
+                }
+            }
+        }
+    }
+    if (picking) {
+        ColorPickerDialog(
+            title = "标签颜色",
+            initial = parseHexColor(colorHex, MaterialTheme.colorScheme.primary),
+            onPick = { colorHex = com.joe.mepe.ui.theme.colorToHex(it); picking = false },
+            onDismiss = { picking = false }
+        )
+    }
+}
+
+/** 番茄钟参数（与桌面端设置键互通） */
+@Composable
+private fun PomodoroSettingsDialog(onClose: () -> Unit) {
+    val eng = PomodoroEngine
+    Dialog(onDismissRequest = onClose) {
+        Card(shape = MaterialTheme.shapes.large) {
+            Column(Modifier.padding(16.dp)) {
+                Text("番茄钟设置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(10.dp))
+                Stepper("专注时长（分钟）", eng.workMinutes.toString(), { eng.workMinutes = (eng.workMinutes - 1).coerceAtLeast(1) }, { eng.workMinutes++ })
+                Stepper("短休息（分钟）", eng.shortMinutes.toString(), { eng.shortMinutes = (eng.shortMinutes - 1).coerceAtLeast(1) }, { eng.shortMinutes++ })
+                Stepper("长休息（分钟）", eng.longMinutes.toString(), { eng.longMinutes = (eng.longMinutes - 1).coerceAtLeast(1) }, { eng.longMinutes++ })
+                Stepper("几轮后长休息", eng.beforeLong.toString(), { eng.beforeLong = (eng.beforeLong - 1).coerceAtLeast(1) }, { eng.beforeLong++ })
+                ToggleRow("专注后自动开始休息", eng.autoStartBreaks, { eng.autoStartBreaks = it })
+                ToggleRow("休息后自动开始专注", eng.autoStartPomodoros, { eng.autoStartPomodoros = it })
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = { eng.saveSettings(); onClose() }) { Text("保存") }
+                }
+            }
+        }
+    }
+}

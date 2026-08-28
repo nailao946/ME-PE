@@ -1,0 +1,3 @@
+-keep class com.joe.mepe.data.** { *; }
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.**
