@@ -58,6 +58,7 @@ import com.joe.mepe.data.BackupManager
 import com.joe.mepe.data.DataBus
 import com.joe.mepe.data.GitHubLogin
 import com.joe.mepe.data.GitHubSync
+import com.joe.mepe.data.UpdateChecker
 import com.joe.mepe.data.Repos
 import com.joe.mepe.data.SyncConfig
 import com.joe.mepe.ui.ColorPickerDialog
@@ -671,6 +672,53 @@ private fun AboutPage(onBack: () -> Unit) {
                 Text(
                     "数据与桌面版（WPF）互通：桌面端备份 zip 可直接导入；GitHub 云同步可直接在两端互传。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            SectionCard(title = "检查更新") {
+                var checking by remember { mutableStateOf(false) }
+                var result by remember { mutableStateOf<UpdateChecker.Result?>(null) }
+                Row(
+                    Modifier.fillMaxWidth().clickable(enabled = !checking) {
+                        checking = true
+                        scope.launch {
+                            result = UpdateChecker.check(com.joe.mepe.BuildConfig.VERSION_NAME)
+                            checking = false
+                        }
+                    },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (checking) "正在检查…" else "点击检查是否有新版本",
+                        Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium
+                    )
+                    if (!checking) Text(
+                        when {
+                            result?.error != null -> "检查失败"
+                            result?.hasUpdate == true -> "有新版本"
+                            result != null -> "已是最新"
+                            else -> "v" + com.joe.mepe.BuildConfig.VERSION_NAME
+                        },
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                result?.let { r ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        when {
+                            r.error != null -> r.error
+                            r.hasUpdate -> "发现新版本 v${r.latest}（当前 v${r.current}），点此前往下载"
+                            else -> "已是最新版本 v${r.latest}"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (r.hasUpdate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = if (r.hasUpdate) FontWeight.SemiBold else FontWeight.Normal,
+                        modifier = if (r.hasUpdate) Modifier.clickable { openUrl(r.releaseUrl) } else Modifier
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "对比 GitHub Releases 发布的最新版本（预发布也算，版本号从 tag/标题/附件文件名提取）",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             SectionCard(title = "提意见 / 反馈 Bug") {
