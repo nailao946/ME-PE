@@ -31,6 +31,8 @@ object SyncConfig {
     @Serializable
     data class Conf(
         var pat: String = "",
+        var refreshToken: String = "",  // GitHub App 开启「令牌过期」时用于自动续期
+        var tokenExpiresAt: Long = 0L,  // 令牌到期时间戳（毫秒）；0 = 令牌不过期
         var repo: String = "",      // owner/name
         var branch: String = "main",
         var autoPush: Boolean = false,
@@ -99,6 +101,11 @@ object GitHubSync {
 
     private const val API = "https://api.github.com"
 
+    /** 统一错误文案：401 = 令牌在 GitHub 侧已失效（被撤销或过期），引导重新授权 */
+    private fun describeError(code: Int, text: String): String =
+        if (code == 401) "GitHub 授权已失效（令牌被撤销或已过期），请重新授权登录一次即可恢复"
+        else "HTTP $code：${text.take(300)}"
+
     private fun request(conf: SyncConfig.Conf, url: String, method: String, body: String?, accept: String = "application/vnd.github+json"): Request =
         Request.Builder()
             .url(url)
@@ -113,7 +120,7 @@ object GitHubSync {
         val resp = http.newCall(request(conf, url, method, body)).execute()
         resp.use { r ->
             val text = r.body?.string() ?: ""
-            if (!r.isSuccessful) throw RuntimeException("HTTP ${r.code}：${text.take(300)}")
+            if (!r.isSuccessful) throw RuntimeException(describeError(r.code, text))
             return text
         }
     }
@@ -126,7 +133,7 @@ object GitHubSync {
                 val resp = http.newCall(request(conf, url, "GET", null, accept)).execute()
                 resp.use { r ->
                     val text = r.body?.string() ?: ""
-                    if (!r.isSuccessful) throw RuntimeException("HTTP ${r.code}：${text.take(300)}")
+                    if (!r.isSuccessful) throw RuntimeException(describeError(r.code, text))
                     return text
                 }
             } catch (e: Exception) {
@@ -150,6 +157,7 @@ object GitHubSync {
     suspend fun submitFeedback(context: Context, content: String): Int = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
         if (conf.pat.isBlank()) throw RuntimeException("尚未绑定 GitHub，请先在「设置 → 云同步」中登录后再提交反馈")
+        GitHubLogin.maybeRefresh(context, conf)
         val text = content.trim()
         if (text.isEmpty()) throw RuntimeException("请先填写反馈内容")
 
@@ -172,6 +180,7 @@ object GitHubSync {
     suspend fun ensureRepo(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
         require(conf.pat.isNotBlank()) { "尚未登录 GitHub 账号" }
+        GitHubLogin.maybeRefresh(context, conf)
 
         var login = conf.account
         if (login.isBlank()) {
@@ -198,7 +207,7 @@ object GitHubSync {
             http.newCall(req).execute().use { r ->
                 // 422 = 仓库已存在，直接使用
                 if (!r.isSuccessful && r.code != 422) {
-                    throw RuntimeException("创建仓库失败：HTTP ${r.code}")
+                    throw RuntimeException("创建仓库失败：" + describeError(r.code, r.body?.string() ?: ""))
                 }
             }
         } catch (e: RuntimeException) {
@@ -232,6 +241,7 @@ object GitHubSync {
     suspend fun push(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
         require(conf.pat.isNotBlank()) { "请先登录 GitHub 账号或填写 Token" }
+        GitHubLogin.maybeRefresh(context, conf)
         val repo = resolveRepo(context)
         val files = JsonStore.allFiles()
         if (files.isEmpty()) return@withContext "没有可上传的数据"
@@ -289,6 +299,7 @@ object GitHubSync {
     suspend fun pull(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
         require(conf.pat.isNotBlank()) { "请先登录 GitHub 账号或填写 Token" }
+        GitHubLogin.maybeRefresh(context, conf)
         val repo = resolveRepo(context)
 
         // 目录清单：一次拿到每个文件的名字、大小与 sha
@@ -365,7 +376,7 @@ object GitHubSync {
  * 应用显示一个 8 位代码 → 打开浏览器 github.com/login/device → 登录输入代码点 Authorize → 自动拿到 Token。
  */
 object GitHubLogin {
-    private const val CLIENT_ID = "Ov23liBQpCTtMnMWyzsa"
+    const val CLIENT_ID = "Ov23liBQpCTtMnMWyzsa"
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -378,6 +389,9 @@ object GitHubLogin {
         val verifyUrl: String,
         var interval: Int = 5,
         val expiresAt: Long = System.currentTimeMillis() + 15 * 60 * 1000,
+        // 授权成功时一并返回的续期信息（应用开启「令牌过期」才有值，否则为空/0）
+        var refreshToken: String = "",
+        var tokenExpiresAt: Long = 0L,
     )
 
     private fun postForm(url: String, body: FormBody): Request =
@@ -427,8 +441,39 @@ object GitHubLogin {
                     else -> "!授权失败：$err"
                 }
             }
-            o["access_token"]?.toString()?.trim('"')
+            o["access_token"]?.toString()?.trim('"')?.also {
+                s.refreshToken = o["refresh_token"]?.toString()?.trim('"') ?: ""
+                val exp = o["expires_in"]?.toString()?.trim('"')?.toLongOrNull() ?: 0L
+                s.tokenExpiresAt = if (exp > 0) System.currentTimeMillis() + exp * 1000 else 0L
+            }
         }
+    }
+
+    /**
+     * GitHub App 开启「令牌过期」后用户令牌 8 小时失效：到期前 10 分钟内自动用 refresh_token 换新，
+     * 用户无需反复重新授权。未存过期时间（应用关闭过期或旧版本登录的）时什么都不做；
+     * 换新失败不打断，让后续请求自然收到 401 并提示重新授权。
+     */
+    suspend fun maybeRefresh(context: Context, conf: SyncConfig.Conf) = withContext(Dispatchers.IO) {
+        if (conf.tokenExpiresAt <= 0L || conf.refreshToken.isBlank()) return@withContext
+        if (conf.tokenExpiresAt - System.currentTimeMillis() > 10 * 60 * 1000L) return@withContext
+        try {
+            val form = FormBody.Builder()
+                .add("client_id", CLIENT_ID)
+                .add("grant_type", "refresh_token")
+                .add("refresh_token", conf.refreshToken)
+                .build()
+            http.newCall(postForm("https://github.com/login/oauth/access_token", form)).execute().use { r ->
+                val o = parseObj(r.body?.string() ?: "{}")
+                val token = o["access_token"]?.toString()?.trim('"')
+                if (token.isNullOrBlank()) return@use
+                conf.pat = token
+                o["refresh_token"]?.toString()?.trim('"')?.takeIf { it.isNotBlank() }?.let { conf.refreshToken = it }
+                val exp = o["expires_in"]?.toString()?.trim('"')?.toLongOrNull() ?: 0L
+                if (exp > 0) conf.tokenExpiresAt = System.currentTimeMillis() + exp * 1000
+                SyncConfig.save(context, conf)
+            }
+        } catch (_: Exception) { }
     }
 
     /** 用 token 拉取 GitHub 用户名（失败返回空串） */

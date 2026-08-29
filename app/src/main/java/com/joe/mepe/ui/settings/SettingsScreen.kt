@@ -370,6 +370,8 @@ private fun SyncPage(onBack: () -> Unit) {
                                 } else {
                                     val fresh = SyncConfig.load(ctx)
                                     fresh.pat = r
+                                    fresh.refreshToken = s.refreshToken
+                                    fresh.tokenExpiresAt = s.tokenExpiresAt
                                     fresh.account = GitHubLogin.fetchAccountName(r)
                                     SyncConfig.save(ctx, fresh)
                                     syncPat = r
