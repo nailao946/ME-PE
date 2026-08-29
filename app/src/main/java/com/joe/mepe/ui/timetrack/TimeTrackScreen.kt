@@ -47,6 +47,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -83,7 +84,6 @@ import com.joe.mepe.ui.DonutChart
 import com.joe.mepe.ui.EmptyHint
 import com.joe.mepe.ui.LabeledField
 import com.joe.mepe.ui.PieSlice
-import com.joe.mepe.ui.ProgressRing
 import com.joe.mepe.ui.QuickLinks
 import com.joe.mepe.ui.Routes
 import com.joe.mepe.ui.RoundedProgressBar
@@ -457,7 +457,7 @@ private fun PomoCircleButton(
     }
 }
 
-/** 番茄钟卡片：大进度环 + 阶段色 + 控制（tick 每 500ms 变化驱动剩余时间重算走字） */
+/** 番茄钟卡片：紧凑时间文本 + 横排控制钮 + 细进度条（tick 每 500ms 变化驱动剩余时间重算走字） */
 @Composable
 private fun PomodoroCard(tick: Int, onOpenSettings: () -> Unit) {
     val _tick = tick // 读取 tick：LazyColumn item 依赖它重组，时间才会走
@@ -498,31 +498,26 @@ private fun PomodoroCard(tick: Int, onOpenSettings: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            ProgressRing(
-                progress = progress, sizeDp = 118, stroke = 10f, color = phaseColor,
-                centerContent = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            if (!running) "未开始" else if (paused) "已暂停" else fmtMs(remaining),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = if (running && !paused) phaseColor else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(phaseName, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            )
+            Column {
+                Text(
+                    if (!running) "未开始" else if (paused) "已暂停" else fmtMs(remaining),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (running && !paused) phaseColor else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(phaseName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Spacer(Modifier.weight(1f))
-            // 图标圆钮列：主控（相位色）+ 跳过 + 重置
-            Column(verticalArrangement = Arrangement.spacedBy(7.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            // 横排控制钮：主控（相位色）+ 跳过 + 重置
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 PomoCircleButton(
                     icon = if (!running || paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
                     desc = if (!running || paused) "开始" else "暂停",
                     bg = if (running && !paused) phaseColor else MaterialTheme.colorScheme.primary,
                     tint = MaterialTheme.colorScheme.onPrimary,
-                    sizeDp = 46
+                    sizeDp = 40
                 ) {
                     if (!running || paused) PomodoroEngine.start() else PomodoroEngine.pause()
                 }
@@ -531,6 +526,7 @@ private fun PomodoroCard(tick: Int, onOpenSettings: () -> Unit) {
                     desc = "跳过",
                     bg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    sizeDp = 40,
                     enabled = running
                 )
                 {
@@ -541,12 +537,24 @@ private fun PomodoroCard(tick: Int, onOpenSettings: () -> Unit) {
                     desc = "重置",
                     bg = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
                     tint = MaterialTheme.colorScheme.error,
+                    sizeDp = 40,
                     enabled = running
                 ) {
                     PomodoroEngine.stop()
                 }
             }
         }
+        Spacer(Modifier.height(10.dp))
+        // 细进度条替代原先的大圆环，保留阶段进度反馈
+        LinearProgressIndicator(
+            progress = { progress.toFloat() },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp)),
+            color = phaseColor,
+            trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        )
     }
 }
 

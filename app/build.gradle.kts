@@ -12,8 +12,8 @@ android {
         applicationId = "com.joe.mepe"
         minSdk = 26
         targetSdk = 34
-        versionCode = 26
-        versionName = "2.4.20"
+        versionCode = 27
+        versionName = "2.4.21"
     }
 
     buildTypes {
