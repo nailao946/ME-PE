@@ -185,6 +185,7 @@ fun GoalsScreen(nav: (String) -> Unit) {
     var draggingGoalKey by remember { mutableStateOf<String?>(null) }
     var goalDragOffset by remember { mutableStateOf(0f) }
     var goalDropTargetKey by remember { mutableStateOf<String?>(null) }
+    var goalDropAfter by remember { mutableStateOf(false) }
     val goalRowGroups = remember { mutableMapOf<String, Pair<Int, Int>>() } // key -> (timeFrame, 目标id)
     val haptic = LocalHapticFeedback.current
 
@@ -204,7 +205,7 @@ fun GoalsScreen(nav: (String) -> Unit) {
         Repos.saveGoals(all.map { g -> roots.find { it.id == g.id } ?: g })
     }
 
-    /** 拖动经过相邻目标时换位；goalDropTargetKey 显示预计落点 */
+    /** 拖动中只计算预计落点（虚影行），不实时换位——松手才落位，杜绝抖动 */
     fun processGoalDrag() {
         val key = draggingGoalKey ?: return
         val frame = goalRowGroups[key]?.first ?: return
@@ -212,22 +213,31 @@ fun GoalsScreen(nav: (String) -> Unit) {
         val draggedCenter = info.offset + goalDragOffset + info.size / 2f
         val candidates = listState.layoutInfo.visibleItemsInfo
             .filter { it.key != key && goalRowGroups[it.key]?.first == frame }
-        val target = candidates
-            .filter {
-                val c = it.offset + it.size / 2f
-                if (goalDragOffset > 0) c < draggedCenter else c > draggedCenter
+        if (candidates.isEmpty()) { goalDropTargetKey = null; return }
+        val target = candidates.firstOrNull { c ->
+            draggedCenter >= c.offset && draggedCenter <= c.offset + c.size
+        } ?: candidates.minByOrNull { kotlin.math.abs(it.offset + it.size / 2f - draggedCenter) }
+            ?: run { goalDropTargetKey = null; return }
+        goalDropTargetKey = target.key as? String
+        goalDropAfter = draggedCenter > target.offset + target.size / 2f
+    }
+
+    /** 松手：按预计落点执行一次重排 */
+    fun finishGoalDrag() {
+        val key = draggingGoalKey
+        if (key != null) {
+            val draggedId = goalRowGroups[key]?.second
+            val tKey = goalDropTargetKey
+            if (draggedId != null && tKey != null) {
+                val targetId = goalRowGroups[tKey]?.second
+                if (targetId != null && targetId != draggedId) {
+                    moveGoalTo(draggedId, targetId, down = goalDropAfter)
+                }
             }
-            .maxByOrNull { if (goalDragOffset > 0) it.offset + it.size / 2f else -(it.offset + it.size / 2f) }
-        goalDropTargetKey = target?.key as? String
-        val t = target ?: return
-        val tCenter = t.offset + t.size / 2f
-        val crossed = if (goalDragOffset > 0) draggedCenter > tCenter else draggedCenter < tCenter
-        if (crossed) {
-            val targetId = goalRowGroups[t.key]?.second ?: return
-            val draggedId = goalRowGroups[key]?.second ?: return
-            moveGoalTo(draggedId, targetId, down = goalDragOffset > 0)
-            goalDragOffset += if (goalDragOffset > 0) -t.size.toFloat() else t.size.toFloat()
         }
+        draggingGoalKey = null
+        goalDragOffset = 0f
+        goalDropTargetKey = null
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -290,7 +300,7 @@ fun GoalsScreen(nav: (String) -> Unit) {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             },
                             onDrag = { dy -> goalDragOffset += dy; processGoalDrag() },
-                            onEndDrag = { draggingGoalKey = null; goalDragOffset = 0f; goalDropTargetKey = null },
+                            onEndDrag = { finishGoalDrag() },
                         ) {
                             GoalNode(
                                 goal = g, goals = goals, tags = tags, tasks = tasks, timeTags = timeTags, today = today,

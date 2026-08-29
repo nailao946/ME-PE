@@ -127,6 +127,7 @@ fun TasksScreen(nav: (String) -> Unit) {
     var draggingKey by remember { mutableStateOf<String?>(null) }
     var dragOffset by remember { mutableStateOf(0f) }
     var dropTargetKey by remember { mutableStateOf<String?>(null) }
+    var dropAfter by remember { mutableStateOf(false) }
     // key -> (分组key, 任务id)；分组："active" / "done" / "p<父任务id>"
     val rowGroups = remember { mutableMapOf<String, Pair<String, Int>>() }
     val haptic = LocalHapticFeedback.current
@@ -142,7 +143,11 @@ fun TasksScreen(nav: (String) -> Unit) {
      * 只重排显示中的任务，其余任务按原相对位置嵌回，显示顺序与落点完全一致。
      */
     fun reorderGroup(group: String, draggedId: Int, targetId: Int, down: Boolean) {
-        val displayed = groupOrderIds[group] ?: return
+        val all = Repos.tasks()
+        val groupAll = all.filter { !it.isDeleted && it.parentTaskId == groupParent(group) }
+            .sortedBy { it.sortOrder }
+        // 界面显示顺序：主分组由列表写入；子任务组回退到存储顺序（即当前显示顺序）
+        val displayed = groupOrderIds[group] ?: groupAll.map { it.id }
         val seq = displayed.toMutableList()
         val di = seq.indexOf(draggedId)
         val ti = seq.indexOf(targetId)
@@ -151,9 +156,6 @@ fun TasksScreen(nav: (String) -> Unit) {
         seq.add((seq.indexOf(targetId) + if (down) 1 else 0).coerceIn(0, seq.size), draggedId)
         if (seq == displayed) return
 
-        val all = Repos.tasks()
-        val groupAll = all.filter { !it.isDeleted && it.parentTaskId == groupParent(group) }
-            .sortedBy { it.sortOrder }
         val byId = groupAll.associateBy { it.id }
         val moved = seq.toSet()
         val queue = ArrayDeque(seq.mapNotNull { byId[it] })
@@ -165,7 +167,7 @@ fun TasksScreen(nav: (String) -> Unit) {
         Repos.reorderTasks(newOrder)
     }
 
-    /** 拖动经过相邻同组项时触发换位；dropTargetKey 显示预计落点 */
+    /** 拖动中只计算预计落点（虚影行），不实时换位——松手才落位，杜绝抖动 */
     fun processDrag() {
         val key = draggingKey ?: return
         val group = rowGroups[key]?.first ?: return
@@ -173,22 +175,33 @@ fun TasksScreen(nav: (String) -> Unit) {
         val draggedCenter = info.offset + dragOffset + info.size / 2f
         val candidates = listState.layoutInfo.visibleItemsInfo
             .filter { it.key != key && rowGroups[it.key]?.first == group }
-        val target = candidates
-            .filter {
-                val c = it.offset + it.size / 2f
-                if (dragOffset > 0) c < draggedCenter else c > draggedCenter
+        if (candidates.isEmpty()) { dropTargetKey = null; return }
+        // 与拖动中心重叠的行 = 预计落点；无重叠时取最近一行
+        val target = candidates.firstOrNull { c ->
+            draggedCenter >= c.offset && draggedCenter <= c.offset + c.size
+        } ?: candidates.minByOrNull { kotlin.math.abs(it.offset + it.size / 2f - draggedCenter) }
+            ?: run { dropTargetKey = null; return }
+        dropTargetKey = target.key as? String
+        dropAfter = draggedCenter > target.offset + target.size / 2f
+    }
+
+    /** 松手：按预计落点执行一次重排（单次保存、单次刷新） */
+    fun finishDrag() {
+        val key = draggingKey
+        if (key != null) {
+            val group = rowGroups[key]?.first
+            val draggedId = rowGroups[key]?.second
+            val targetKey = dropTargetKey
+            if (group != null && draggedId != null && targetKey != null) {
+                val targetId = rowGroups[targetKey]?.second
+                if (targetId != null && targetId != draggedId) {
+                    reorderGroup(group, draggedId, targetId, down = dropAfter)
+                }
             }
-            .maxByOrNull { if (dragOffset > 0) it.offset + it.size / 2f else -(it.offset + it.size / 2f) }
-        dropTargetKey = target?.key as? String
-        val t = target ?: return
-        val tCenter = t.offset + t.size / 2f
-        val crossed = if (dragOffset > 0) draggedCenter > tCenter else draggedCenter < tCenter
-        if (crossed) {
-            val targetId = rowGroups[t.key]?.second ?: return
-            val draggedId = rowGroups[key]?.second ?: return
-            reorderGroup(group, draggedId, targetId, down = dragOffset > 0)
-            dragOffset += if (dragOffset > 0) -t.size.toFloat() else t.size.toFloat()
         }
+        draggingKey = null
+        dragOffset = 0f
+        dropTargetKey = null
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -307,53 +320,59 @@ fun TasksScreen(nav: (String) -> Unit) {
         groupOrderIds["active"] = activeTasks.map { it.id }
         groupOrderIds["done"] = doneTasks.map { it.id }
 
+        // 拍平的行：主任务与其子任务都是独立列表项（子任务才能拥有自己的拖动定位）
+        val subsByParent = allTasks.filter { it.parentTaskId != null }.groupBy { it.parentTaskId!! }
+        fun rowsFor(list: List<TaskItem>): List<TaskRow> = buildList {
+            list.forEach { t ->
+                val subs = (subsByParent[t.id] ?: emptyList()).sortedBy { it.sortOrder }
+                add(TaskRow.Main(t, subs))
+                subs.forEach { add(TaskRow.Sub(t.id, it)) }
+            }
+        }
+        val activeRows = rowsFor(activeTasks)
+        val doneRows = rowsFor(doneTasks)
+
         LazyColumn(Modifier.fillMaxSize().weight(1f), state = listState) {
             item(key = "head_empty") {
                 if (activeTasks.isEmpty() && doneTasks.isEmpty()) EmptyHint("此日期没有任务", Icons.Filled.Checklist)
             }
-            if (activeTasks.isNotEmpty()) {
+            if (activeRows.isNotEmpty()) {
                 item(key = "sec_active") { SectionLabel("进行中 (${activeTasks.size})") }
-                items(activeTasks, key = { "t${it.id}" }) { t ->
-                    rowGroups["t${t.id}"] = "active" to t.id
-                    DraggableTaskGroup(
-                        mainKey = "t${t.id}",
-                        task = t, date = selectedDate,
+                items(activeRows, key = { it.key }) { row ->
+                    TaskRowItem(
+                        row = row, date = selectedDate,
                         completions = completions, goals = goals, tags = tags, timeTags = timeTags,
-                        isDone = false,
+                        group = "active", isDone = false,
                         draggingKey = draggingKey, dragOffset = dragOffset, dropTargetKey = dropTargetKey,
                         onStartDrag = {
                             draggingKey = it; dragOffset = 0f
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         },
                         onDrag = { dy -> dragOffset += dy; processDrag() },
-                        onEndDrag = { draggingKey = null; dragOffset = 0f; dropTargetKey = null },
+                        onEndDrag = { finishDrag() },
                         onEdit = { editingTask = it }, onDelete = { deleteTarget = it },
                         onOpen = { detailTaskId = it.id },
-                        registerKey = { k, id -> rowGroups[k] = subGroupKey(k) to id },
-                        registerOrder = { g, ids -> groupOrderIds[g] = ids },
+                        onRegister = { k, g, id -> rowGroups[k] = g to id },
                     )
                 }
             }
-            if (doneTasks.isNotEmpty()) {
+            if (doneRows.isNotEmpty()) {
                 item(key = "sec_done") { SectionLabel("今日已完成 (${doneTasks.size})") }
-                items(doneTasks, key = { "d${it.id}" }) { t ->
-                    rowGroups["d${t.id}"] = "done" to t.id
-                    DraggableTaskGroup(
-                        mainKey = "d${t.id}",
-                        task = t, date = selectedDate,
+                items(doneRows, key = { it.key }) { row ->
+                    TaskRowItem(
+                        row = row, date = selectedDate,
                         completions = completions, goals = goals, tags = tags, timeTags = timeTags,
-                        isDone = true,
+                        group = "done", isDone = true,
                         draggingKey = draggingKey, dragOffset = dragOffset, dropTargetKey = dropTargetKey,
                         onStartDrag = {
                             draggingKey = it; dragOffset = 0f
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         },
                         onDrag = { dy -> dragOffset += dy; processDrag() },
-                        onEndDrag = { draggingKey = null; dragOffset = 0f; dropTargetKey = null },
+                        onEndDrag = { finishDrag() },
                         onEdit = { editingTask = it }, onDelete = { deleteTarget = it },
                         onOpen = { detailTaskId = it.id },
-                        registerKey = { k, id -> rowGroups[k] = subGroupKey(k) to id },
-                        registerOrder = { g, ids -> groupOrderIds[g] = ids },
+                        onRegister = { k, g, id -> rowGroups[k] = g to id },
                     )
                 }
             }
@@ -400,23 +419,27 @@ fun TasksScreen(nav: (String) -> Unit) {
     }
 }
 
-// 生成子任务行的分组 key（p<父id>）
-private fun subGroupKey(k: String): String {
-    // k 形如 s<父id>_<子id>
-    val parent = k.removePrefix("s").substringBefore('_')
-    return "p$parent"
+/** 拍平的任务行：主任务与子任务都是独立列表项（子任务才能拥有自己的拖动定位与落点） */
+private sealed class TaskRow {
+    abstract val key: String
+    data class Main(val task: TaskItem, val subs: List<TaskItem>) : TaskRow() {
+        override val key get() = "t${task.id}"
+    }
+    data class Sub(val parentId: Int, val task: TaskItem) : TaskRow() {
+        override val key get() = "s${parentId}_${task.id}"
+    }
 }
 
-/** 主任务卡 + 子任务树（每张卡都可长按拖动，同组内排序；主卡可左滑编辑/删除） */
+/** 拍平后的任务行：独立列表项，可长按拖动（落点虚影+松手落位）、可左滑编辑/删除 */
 @Composable
-private fun DraggableTaskGroup(
-    mainKey: String,
-    task: TaskItem,
+private fun TaskRowItem(
+    row: TaskRow,
     date: LocalDate,
     completions: List<com.joe.mepe.data.TaskCompletionRecord>,
     goals: List<Goal>,
     tags: List<GoalTag>,
     timeTags: List<com.joe.mepe.data.TimeTag>,
+    group: String,
     isDone: Boolean,
     draggingKey: String?,
     dragOffset: Float,
@@ -427,46 +450,42 @@ private fun DraggableTaskGroup(
     onEdit: (TaskItem) -> Unit,
     onDelete: (TaskItem) -> Unit,
     onOpen: (TaskItem) -> Unit,
-    registerKey: (String, Int) -> Unit,
-    registerOrder: (String, List<Int>) -> Unit,
+    onRegister: (String, String, Int) -> Unit,
 ) {
-    val subtasks = rememberData(key = task.id to date) {
-        Repos.tasks().filter { it.parentTaskId == task.id && !it.isDeleted }
-            .sortedBy { it.sortOrder }
+    val task: TaskItem = when (row) {
+        is TaskRow.Main -> row.task
+        is TaskRow.Sub -> row.task
     }
-    registerOrder("p${task.id}", subtasks.map { it.id })
-    Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+    val itemKey = row.key
+    val parentId = (row as? TaskRow.Sub)?.parentId
+    val indent = parentId != null
+    val regGroup = if (parentId != null) "p$parentId" else group
+    onRegister(itemKey, regGroup, task.id)
+    val done = if (row is TaskRow.Sub) TaskLogic.isDoneOn(task, date, completions) else isDone
+
+    Column(
+        Modifier.padding(
+            start = if (indent) 36.dp else 12.dp,
+            end = 12.dp,
+            top = 2.dp,
+            bottom = 2.dp
+        )
+    ) {
         SwipeReveal(
             onEdit = { onEdit(task) }, onDelete = { onDelete(task) },
             locked = draggingKey != null,
-            panelColor = if (isDone) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
+            panelColor = if (done) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
         ) {
             DraggableCard(
-                itemKey = mainKey,
+                itemKey = itemKey,
                 draggingKey = draggingKey, dragOffset = dragOffset, dropTargetKey = dropTargetKey,
                 onStartDrag = onStartDrag, onDrag = onDrag, onEndDrag = onEndDrag,
             ) {
-                TaskCard(task, date, completions, goals, tags, timeTags, subtasks, onOpen = onOpen, draggable = true)
-            }
-        }
-        subtasks.forEach { sub ->
-            val key = "s${task.id}_${sub.id}"
-            registerKey(key, sub.id)
-            val subDone = TaskLogic.isDoneOn(sub, date, completions)
-            Box(Modifier.padding(start = 24.dp, top = 4.dp)) {
-                SwipeReveal(
-                    onEdit = { onEdit(sub) }, onDelete = { onDelete(sub) },
-                    locked = draggingKey != null,
-                    panelColor = if (subDone) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
-                ) {
-                    DraggableCard(
-                        itemKey = key,
-                        draggingKey = draggingKey, dragOffset = dragOffset, dropTargetKey = dropTargetKey,
-                        onStartDrag = onStartDrag, onDrag = onDrag, onEndDrag = onEndDrag,
-                    ) {
-                        TaskCard(sub, date, completions, goals, tags, timeTags, emptyList(), onOpen = onOpen, draggable = true)
-                    }
-                }
+                TaskCard(
+                    task, date, completions, goals, tags, timeTags,
+                    subtasks = (row as? TaskRow.Main)?.subs ?: emptyList(),
+                    onOpen = onOpen, draggable = true
+                )
             }
         }
     }
