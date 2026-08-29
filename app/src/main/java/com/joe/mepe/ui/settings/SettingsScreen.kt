@@ -68,6 +68,7 @@ import com.joe.mepe.ui.Routes
 import com.joe.mepe.ui.ScreenHeader
 import com.joe.mepe.ui.SectionCard
 import com.joe.mepe.ui.Segmented
+import com.joe.mepe.ui.SyncStatusBus
 import com.joe.mepe.ui.ToggleRow
 import com.joe.mepe.ui.theme.Accents
 import com.joe.mepe.ui.theme.IconColorChoices
@@ -447,7 +448,9 @@ private fun SyncPage(onBack: () -> Unit) {
                                     it.branch = syncBranch.trim().ifBlank { "main" }; it.autoPush = syncAuto
                                 }
                                 SyncConfig.save(ctx, c)
-                                msg = GitHubSync.push(ctx)
+                                SyncStatusBus.setRunning("正在上传…")
+                                msg = try { GitHubSync.push(ctx) } catch (e: Exception) { "✗ 上传失败：" + (e.message ?: "网络异常") }
+                                SyncStatusBus.report(msg)
                                 syncing = false
                             }
                         },
@@ -463,7 +466,9 @@ private fun SyncPage(onBack: () -> Unit) {
                                     it.branch = syncBranch.trim().ifBlank { "main" }; it.autoPush = syncAuto
                                 }
                                 SyncConfig.save(ctx, c)
-                                msg = GitHubSync.pull(ctx)
+                                SyncStatusBus.setRunning("正在下载…")
+                                msg = try { GitHubSync.pull(ctx) } catch (e: Exception) { "✗ 下载失败：" + (e.message ?: "网络异常") }
+                                SyncStatusBus.report(msg)
                                 syncing = false
                             }
                         },

@@ -47,6 +47,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -61,7 +63,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -81,7 +85,10 @@ import com.joe.mepe.ui.EmptyHint
 import com.joe.mepe.ui.QuickLinks
 import com.joe.mepe.ui.Routes
 import com.joe.mepe.ui.ScreenHeader
+import com.joe.mepe.ui.SyncBall
+import com.joe.mepe.ui.SyncStatusBus
 import com.joe.mepe.ui.SwipeReveal
+import com.joe.mepe.ui.runFullSync
 import com.joe.mepe.ui.rememberData
 import com.joe.mepe.ui.theme.LocalIconColor
 import com.joe.mepe.ui.theme.parseHexColor
@@ -102,7 +109,8 @@ private data class TasksData(
     val timeTags: List<com.joe.mepe.data.TimeTag>,
 )
 
-/** 任务列表页：日期条 + 标签过滤 + 分区 + 长按拖动排序 + 左滑编辑/删除 + 点卡片看详情 */
+/** 任务列表页：日期条 + 标签过滤 + 分区 + 长按拖动排序 + 左滑编辑/删除 + 点卡片看详情 + 下拉刷新云同步 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TasksScreen(nav: (String) -> Unit) {
     var selectedDate by rememberSaveable { mutableStateOf(LocalDate.now()) }
@@ -111,6 +119,17 @@ fun TasksScreen(nav: (String) -> Unit) {
     var creating by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<TaskItem?>(null) }
     var detailTaskId by remember { mutableStateOf<Int?>(null) }
+
+    // ---- 云同步：下拉列表触发（微博式），顶栏状态球可点击同步，过程与结果见状态球 + Toast ----
+    val syncCtx = LocalContext.current
+    val pullState = rememberPullToRefreshState()
+    // 松手超过阈值后 isRefreshing=true → 执行一次完整同步，完成后自动收起转圈
+    LaunchedEffect(pullState.isRefreshing) {
+        if (!pullState.isRefreshing) return@LaunchedEffect
+        if (SyncStatusBus.state != SyncStatusBus.State.RUNNING)
+            runFullSync(syncCtx, toast = true)
+        pullState.endRefresh()
+    }
 
     val rev = DataBus.rev
     val data = remember(selectedDate, selectedTagId, rev) {
@@ -212,7 +231,7 @@ fun TasksScreen(nav: (String) -> Unit) {
                 if (it == LocalDate.now()) "今天 · " + listOf("一","二","三","四","五","六","日")[it.dayOfWeek.value-1] + " · 左滑卡片编辑/删除"
                 else it.format(DateTimeFormatter.ofPattern("M月d日")) + " · 左滑卡片编辑/删除"
             },
-            actions = { QuickLinks(Routes.TASKS, nav) }
+            actions = { SyncBall(); QuickLinks(Routes.TASKS, nav) }
         )
 
         // 日期条（今天前后各一年，可横滑）+ 一键回今天（今天始终居中）
@@ -334,7 +353,9 @@ fun TasksScreen(nav: (String) -> Unit) {
         val activeRows = rowsFor(activeTasks)
         val doneRows = rowsFor(doneTasks)
 
-        LazyColumn(Modifier.fillMaxSize().weight(1f), state = listState) {
+        // 下拉刷新：列表在顶部继续下拉触发云同步；转圈指示器显示在下拉位置
+        Box(Modifier.weight(1f).nestedScroll(pullState.nestedScrollConnection)) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState) {
             item(key = "head_empty") {
                 if (activeTasks.isEmpty() && doneTasks.isEmpty()) EmptyHint("此日期没有任务", Icons.Filled.Checklist)
             }
@@ -379,6 +400,8 @@ fun TasksScreen(nav: (String) -> Unit) {
                 }
             }
             item(key = "tail") { Spacer(Modifier.height(96.dp)) }
+        }
+            PullToRefreshContainer(pullState, Modifier.align(Alignment.TopCenter))
         }
     }
 
