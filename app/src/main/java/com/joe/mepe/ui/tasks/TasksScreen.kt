@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -188,10 +189,23 @@ fun TasksScreen(nav: (String) -> Unit) {
             actions = { QuickLinks(Routes.TASKS, nav) }
         )
 
-        // 日期条（今天 ±7 天，可横滑）+ 一键回今天
+        // 日期条（今天 ±7 天，可横滑）+ 一键回今天（今天始终居中）
         val dayOffsets = (-7L..14L).toList()
+        val todayIndex = 7 // offset=0（今天）在列表中的下标
+        val dateListState = rememberLazyListState()
+        val dateScope = rememberCoroutineScope()
+        suspend fun centerToday(animate: Boolean) {
+            dateListState.scrollToItem(todayIndex)
+            val info = dateListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == todayIndex } ?: return
+            val viewport = dateListState.layoutInfo.viewportEndOffset - dateListState.layoutInfo.viewportStartOffset
+            val off = info.size / 2 - viewport / 2
+            if (animate) dateListState.animateScrollToItem(todayIndex, off)
+            else dateListState.scrollToItem(todayIndex, off)
+        }
+        LaunchedEffect(Unit) { centerToday(animate = false) }
+
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            LazyRow(Modifier.weight(1f).padding(vertical = 4.dp)) {
+            LazyRow(Modifier.weight(1f).padding(vertical = 4.dp), state = dateListState) {
                 items(dayOffsets) { offset ->
                     val d = LocalDate.now().plusDays(offset)
                     val active = d == selectedDate
@@ -230,7 +244,10 @@ fun TasksScreen(nav: (String) -> Unit) {
                 }
             }
             TextButton(
-                onClick = { selectedDate = LocalDate.now() },
+                onClick = {
+                    selectedDate = LocalDate.now()
+                    dateScope.launch { centerToday(animate = true) }
+                },
                 modifier = Modifier.padding(end = 8.dp)
             ) { Text("今天") }
         }
