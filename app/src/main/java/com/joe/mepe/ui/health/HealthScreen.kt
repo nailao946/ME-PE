@@ -398,6 +398,7 @@ fun WaterTab() {
     val days = lastNDays(14)
     val waterColor = Color(0xFF4FC3F7)
     var addingContainer by remember { mutableStateOf(false) }
+    var editingContainer by remember { mutableStateOf<com.joe.mepe.data.WaterContainer?>(null) }
     var cName by remember { mutableStateOf("") }
     var cMl by remember { mutableStateOf("") }
 
@@ -459,7 +460,7 @@ fun WaterTab() {
                 }
                 if (containers.size > 3) {
                     Spacer(Modifier.height(6.dp))
-                    Text("还有 ${containers.size - 3} 个容器在「管理」中添加", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("其余容器在下方「容器管理」中记录", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -507,23 +508,68 @@ fun WaterTab() {
         BarChart(vals, days.map { fmtDay(it) })
     }
 
-    if (addingContainer) {
-        androidx.compose.ui.window.Dialog(onDismissRequest = { addingContainer = false }) {
+    // 容器管理：列出全部容器，可编辑/删除/新增（与桌面端互通，存 water_containers.json）
+    SectionCard(title = "容器管理（${containers.size}）") {
+        if (containers.isEmpty()) {
+            EmptyHint("还没有容器，点下方新增（如：马克杯 500ml）", Icons.Filled.WaterDrop)
+        } else {
+            containers.forEach { c ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Filled.WaterDrop, null, tint = waterColor, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("${c.name}（${c.capacityMl.toInt()}ml）", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = { Repos.addHealth(HealthTypes.WATER, today, c.capacityMl) }) { Text("记一笔") }
+                    IconButton(
+                        onClick = {
+                            editingContainer = c
+                            cName = c.name
+                            cMl = if (c.capacityMl == c.capacityMl.toLong().toDouble()) c.capacityMl.toInt().toString() else c.capacityMl.toString()
+                        },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Filled.Edit, "编辑容器", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        }
+        TextButton(onClick = { addingContainer = true }) { Text("＋ 新增容器") }
+    }
+
+    if (addingContainer || editingContainer != null) {
+        val isEdit = editingContainer != null
+        androidx.compose.ui.window.Dialog(onDismissRequest = { addingContainer = false; editingContainer = null }) {
             androidx.compose.material3.Card(shape = MaterialTheme.shapes.large) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("自定义喝水容器", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (isEdit) "编辑容器" else "新增容器",
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold
+                    )
                     Spacer(Modifier.height(10.dp))
                     com.joe.mepe.ui.LabeledField("名称", cName, { cName = it }, placeholder = "如：马克杯")
                     com.joe.mepe.ui.NumberField("容量（ml）", cMl, { cMl = it })
                     Spacer(Modifier.height(10.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = { addingContainer = false }) { Text("取消") }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                        if (isEdit) {
+                            TextButton(onClick = {
+                                Repos.deleteWaterContainer(editingContainer!!.id)
+                                editingContainer = null; cName = ""; cMl = ""
+                            }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                        }
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = { addingContainer = false; editingContainer = null }) { Text("取消") }
                         Button(onClick = {
                             val ml = cMl.toDoubleOrNull()
                             if (cName.isNotBlank() && ml != null && ml > 0) {
-                                Repos.addWaterContainer(com.joe.mepe.data.WaterContainer(name = cName.trim(), capacityMl = ml))
+                                if (isEdit) {
+                                    Repos.updateWaterContainer(editingContainer!!.copy(name = cName.trim(), capacityMl = ml))
+                                } else {
+                                    Repos.addWaterContainer(com.joe.mepe.data.WaterContainer(name = cName.trim(), capacityMl = ml))
+                                }
                                 cName = ""; cMl = ""
-                                addingContainer = false
+                                addingContainer = false; editingContainer = null
                             }
                         }, enabled = cName.isNotBlank() && cMl.toDoubleOrNull() != null) { Text("保存") }
                     }

@@ -260,6 +260,15 @@ object Repos {
 
     fun deleteWaterContainer(id: Int) = saveWaterContainers(waterContainers().filterNot { it.id == id })
 
+    fun updateWaterContainer(w: WaterContainer) {
+        val all = waterContainers()
+        val i = all.indexOfFirst { it.id == w.id }
+        if (i >= 0) {
+            all[i] = w
+            saveWaterContainers(all)
+        }
+    }
+
     // ---------- exercise ----------
     private val exK = ListSerializer(ExerciseItem.serializer())
     fun exercises(): MutableList<ExerciseItem> =

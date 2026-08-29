@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.SubdirectoryArrowRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -80,8 +81,10 @@ import com.joe.mepe.ui.StatRow
 import com.joe.mepe.ui.ToggleRow
 import com.joe.mepe.ui.colorForGoal
 import com.joe.mepe.ui.rememberData
+import com.joe.mepe.ui.theme.LocalIconColor
 import com.joe.mepe.ui.theme.parseHexColor
 import java.time.LocalDate
+import java.time.LocalDateTime
 import kotlin.math.roundToLong
 
 private val frameNames = listOf("短期目标", "长期目标", "灵感目标")
@@ -385,6 +388,17 @@ private fun SubGoalRow(
                     if (children.isNotEmpty()) append(" · 子目标 ${children.size}")
                 }
                 Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(4.dp))
+                // 进度条（量化=数值进度，普通=百分比进度）
+                Box(
+                    Modifier.fillMaxWidth().height(4.dp)
+                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(2.dp))
+                ) {
+                    Box(
+                        Modifier.fillMaxWidth(progress.toFloat()).height(4.dp)
+                            .background(color, RoundedCornerShape(2.dp))
+                    )
+                }
             }
             Box(
                 Modifier.size(28.dp).clickable { onEdit(goal) },
@@ -645,8 +659,19 @@ fun GoalEditDialog(initial: Goal?, parentId: Int? = null, onClose: () -> Unit) {
                         }
                     }
                     Spacer(Modifier.width(4.dp))
-                    androidx.compose.material3.OutlinedButton(onClick = { showColorPicker = true }, shape = MaterialTheme.shapes.small) {
-                        Text("自定义…")
+                    // 自定义颜色：图标圆球（窄屏放不下文字按钮，用颜料盘图标代替）
+                    Box(
+                        Modifier
+                            .size(30.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f), CircleShape)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                            .clickable { showColorPicker = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Filled.Palette, "自定义颜色",
+                            tint = LocalIconColor.current, modifier = Modifier.size(16.dp)
+                        )
                     }
                     if (colorHex != null) {
                         Spacer(Modifier.width(8.dp))
@@ -716,10 +741,12 @@ fun GoalEditDialog(initial: Goal?, parentId: Int? = null, onClose: () -> Unit) {
                                 this.parentId = parentGoalId
                                 this.startDate = startDate?.atStartOfDay()
                                 this.endDate = endDate?.atTime(23, 59)
-                                this.isArchived = archived
-                                this.quantitativeTarget = if (useQuant) quantTarget.toDoubleOrNull() else null
-                                this.quantitativeUnit = if (useQuant) quantUnit.ifBlank { null } else null
-                                this.quantitativeStart = if (useQuant) (this.quantitativeStart ?: 0.0) else null
+                            this.isArchived = archived
+                            if (isNew) this.createdAt = LocalDateTime.now()
+                            this.updatedAt = LocalDateTime.now()
+                            this.quantitativeTarget = if (useQuant) quantTarget.toDoubleOrNull() else null
+                            this.quantitativeUnit = if (useQuant) quantUnit.ifBlank { null } else null
+                            this.quantitativeStart = if (useQuant) (this.quantitativeStart ?: 0.0) else null
                             }
                             if (isNew) Repos.addGoal(g) else Repos.updateGoal(g)
                             onClose()

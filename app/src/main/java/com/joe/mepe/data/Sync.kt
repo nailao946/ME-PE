@@ -32,6 +32,8 @@ object SyncConfig {
         var lastPushAt: String = "",
         var lastPullAt: String = "",
         var account: String = "",   // 授权登录后显示的 GitHub 用户名
+        // 每个文件上次同步后的云端 sha，用于检测「云端比本地新」避免覆盖别人/别的设备的更新
+        var fileShas: Map<String, String> = emptyMap(),
     )
 
     private const val FILE = "sync_config.json"
@@ -141,7 +143,8 @@ object GitHubSync {
         "$login/${conf.repo}"
     }
 
-    /** 上传 JsonData 全部文件到仓库 data/ 目录（逐文件 commit，已存在则带 sha 更新） */
+    /** 上传 JsonData 全部文件到仓库 data/ 目录（逐文件 commit，已存在则带 sha 更新）。
+     *  防覆盖：若某文件云端 sha 与上次同步记录不一致（别的设备改过），跳过该文件并提示先下载。 */
     suspend fun push(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
         require(conf.pat.isNotBlank()) { "请先登录 GitHub 账号或填写 Token" }
@@ -149,7 +152,9 @@ object GitHubSync {
         val files = JsonStore.allFiles()
         if (files.isEmpty()) return@withContext "没有可上传的数据"
         var okCount = 0
+        var skipped = 0
         var lastErr: String? = null
+        val newShas = conf.fileShas.toMutableMap()
         for (f in files) {
             try {
                 val content = Base64.getEncoder().encodeToString(f.readText().toByteArray(Charsets.UTF_8))
@@ -160,25 +165,36 @@ object GitHubSync {
                     sha = (existing["sha"])?.toString()?.trim('"')
                 } catch (_: Exception) { /* 不存在则新建 */ }
 
+                // 云端被其它设备更新过而本地没有先下载 → 跳过，避免覆盖
+                val known = conf.fileShas[f.name]
+                if (known != null && sha != null && known != sha) {
+                    skipped++
+                    continue
+                }
+
                 val payload = buildJsonObject {
                     put("message", "ME 数据同步（Android）· ${java.time.LocalDateTime.now()}")
                     put("content", content)
                     put("branch", conf.branch)
                     if (sha != null) put("sha", sha)
                 }.toString()
-                parseObj(httpCall(conf, "$API/repos/$repo/contents/data/${f.name}", "PUT", payload))
+                val resp = parseObj(httpCall(conf, "$API/repos/$repo/contents/data/${f.name}", "PUT", payload))
+                (resp["content"] as? JsonObject)?.get("sha")?.toString()?.trim('"')?.let { newShas[f.name] = it }
                 okCount++
             } catch (e: Exception) {
                 lastErr = e.message
             }
         }
-        return@withContext if (okCount == files.size) {
+        if (okCount > 0) {
+            conf.fileShas = newShas
             conf.lastPushAt = java.time.LocalDateTime.now().toString()
             SyncConfig.save(context, conf)
-            "✓ 已上传 $okCount 个文件"
-        } else {
-            "已上传 $okCount/${files.size} 个" + (lastErr?.let { "，错误：$it" } ?: "")
         }
+        val base = if (okCount == files.size) "✓ 已上传 $okCount 个文件"
+        else "已上传 $okCount/${files.size} 个" + (lastErr?.let { "，错误：$it" } ?: "")
+        return@withContext if (skipped > 0)
+            "$base；云端有 $skipped 个文件比本地新，已跳过（请先「下载数据」再上传）"
+        else base
     }
 
     /** 从仓库 data/ 目录下载并覆盖本地 JsonData（先做本地备份） */
@@ -202,6 +218,7 @@ object GitHubSync {
 
         var n = 0
         var lastErr: String? = null
+        val newShas = conf.fileShas.toMutableMap()
         for (item in items) {
             val name = item["name"]?.toString()?.trim('"') ?: continue
             if (!name.endsWith(".json")) continue
@@ -210,12 +227,14 @@ object GitHubSync {
                 val contentB64 = detail["content"]?.toString()?.trim('"') ?: continue
                 val text = String(Base64.getMimeDecoder().decode(contentB64), Charsets.UTF_8)
                 File(JsonStore.dir, name).writeText(text)
+                detail["sha"]?.toString()?.trim('"')?.let { newShas[name] = it }
                 n++
             } catch (e: Exception) {
                 lastErr = e.message
             }
         }
         if (n > 0) {
+            conf.fileShas = newShas
             conf.lastPullAt = java.time.LocalDateTime.now().toString()
             SyncConfig.save(context, conf)
             DataBus.bump()

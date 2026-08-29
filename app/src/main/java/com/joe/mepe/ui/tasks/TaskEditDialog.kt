@@ -1,5 +1,7 @@
 package com.joe.mepe.ui.tasks
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,6 +9,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -45,6 +49,8 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
     var desc by remember { mutableStateOf(initial?.description ?: "") }
     var type by remember { mutableStateOf(initial?.type ?: TaskTypes.ONE_TIME) }
     var goalId by remember { mutableStateOf(initial?.goalId) }
+    var timeTagId by remember { mutableStateOf(initial?.timeTagId) }
+    val timeTags = remember { Repos.timeTags() }
 
     var startDate by remember { mutableStateOf(initial?.startDate?.toLocalDate() ?: LocalDate.now()) }
     var endDate by remember { mutableStateOf(initial?.endDate?.toLocalDate()) }
@@ -88,27 +94,44 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
                 }
                 Spacer(Modifier.height(10.dp))
 
-                // 所属目标
+                // 所属目标（横滑芯片，放得下不换行）
                 Text("所属目标", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(onClick = { goalId = null }) {
-                        Text("无", color = if (goalId == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                androidx.compose.foundation.lazy.LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    item {
+                        GoalChip("无目标", goalId == null, null) { goalId = null }
                     }
-                }
-                goals.filter { it.parentId == null }.forEach { g ->
-                    OutlinedButton(
-                        onClick = { goalId = g.id },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
-                    ) {
-                        Text(
-                            g.name,
-                            color = if (goalId == g.id) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                    items(goals.filter { it.parentId == null }, key = { it.id }) { g ->
+                        GoalChip(g.name, goalId == g.id, null) { goalId = g.id }
                     }
                 }
                 Spacer(Modifier.height(10.dp))
+
+                // 关联时间标签（与桌面端一致：计时/专注时归到该标签）
+                if (timeTags.isNotEmpty()) {
+                    Text("关联时间标签", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(6.dp))
+                    androidx.compose.foundation.lazy.LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        item {
+                            GoalChip("无", timeTagId == null, null) { timeTagId = null }
+                        }
+                        items(timeTags, key = { it.id }) { t ->
+                            GoalChip(
+                                t.name, timeTagId == t.id,
+                                com.joe.mepe.ui.theme.parseHexColor(
+                                    t.color, MaterialTheme.colorScheme.primary
+                                )
+                            ) { timeTagId = if (timeTagId == t.id) null else t.id }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
 
                 when (type) {
                     TaskTypes.ONE_TIME -> {
@@ -191,6 +214,7 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
                                 this.description = desc.ifBlank { null }
                                 this.type = type
                                 this.goalId = goalId
+                                this.timeTagId = timeTagId
                                 this.startDate = startDate.atStartOfDay()
                                 this.endDate = endDate?.atTime(23, 59, 59)
                                 this.recurringPattern = if (type == TaskTypes.PERIODIC) pattern else null
@@ -203,7 +227,8 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
                                 this.quantitativeTarget = if (type == TaskTypes.QUANTITATIVE) quantTarget.toDoubleOrNull() else null
                                 this.quantitativeUnit = if (type == TaskTypes.QUANTITATIVE) quantUnit.ifBlank { null } else null
                                 this.quantitativeDailyMin = if (type == TaskTypes.QUANTITATIVE) (quantDailyMin.toDoubleOrNull() ?: 1.0) else null
-                                if (isNew) this.isCompleted = false
+                                if (isNew) { this.isCompleted = false; this.createdAt = LocalDateTime.now() }
+                                this.updatedAt = LocalDateTime.now()
                             }
                             if (isNew) Repos.addTask(t) else Repos.updateTask(t)
                             onClose()
@@ -217,6 +242,34 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
 
     if (showStartPick) DatePickerDialog(startDate, { startDate = it; showStartPick = false }, { showStartPick = false })
     if (showEndPick) DatePickerDialog(endDate ?: startDate, { endDate = it; showEndPick = false }, { showEndPick = false })
+}
+
+/** 选择芯片（横滑，圆角小胶囊；dot 颜色可空） */
+@Composable
+private fun GoalChip(label: String, active: Boolean, dot: androidx.compose.ui.graphics.Color?, onClick: () -> Unit) {
+    androidx.compose.foundation.layout.Box(
+        Modifier
+            .background(
+                if (active) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp)
+    ) {
+        androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            if (dot != null) {
+                com.joe.mepe.ui.ColorDot(dot)
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 }
 
 private fun trimNum(d: Double): String =

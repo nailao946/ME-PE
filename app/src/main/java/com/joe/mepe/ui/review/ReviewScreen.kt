@@ -1,6 +1,8 @@
 package com.joe.mepe.ui.review
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -102,6 +105,8 @@ fun ReviewScreen(nav: (String) -> Unit) {
             }
         }
 
+        TimeStatsCard(mode = mode, start = start, end = end)
+
         SectionCard(title = "历史盘点") {
             val list = reviews.filter { it.type == mode }.sortedByDescending { it.reviewDate }
             if (list.isEmpty()) EmptyHint("还没有写过盘点")
@@ -162,6 +167,91 @@ fun ReviewScreen(nav: (String) -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * 时间统计卡（参考桌面端统计）：总计 / 各标签时长占比 / 每日趋势。
+ * span: 0=今日 1=本周 2=本月 3=全部
+ */
+@Composable
+private fun TimeStatsCard(mode: Int, start: LocalDate, end: LocalDate) {
+    val rev = DataBus.rev
+    var span by rememberSaveable { mutableStateOf(if (mode == 0) 1 else 2) }
+    val tags = remember(rev) { Repos.timeTags() }
+    val records = remember(rev) { Repos.timeRecords().filter { it.endTime != null } }
+    val today = LocalDate.now()
+
+    val (s, e) = when (span) {
+        0 -> today to today
+        1 -> today.with(java.time.DayOfWeek.MONDAY) to today
+        2 -> today.withDayOfMonth(1) to today
+        else -> null to null
+    }
+    val inRange = records.filter { r ->
+        val d = try { LocalDate.parse(r.date) } catch (_: Exception) { return@filter false }
+        (s == null || !d.isBefore(s)) && (e == null || !d.isAfter(e))
+    }
+    val perTag = tags.map { t -> t to inRange.filter { it.tagId == t.id }.sumOf { it.minutes() } }
+        .filter { it.second > 0 }
+        .sortedByDescending { it.second }
+    val total = perTag.sumOf { it.second }
+
+    SectionCard(title = "时间统计") {
+        com.joe.mepe.ui.Segmented(listOf("今日", "本周", "本月", "全部"), span) { span = it }
+        Spacer(Modifier.height(10.dp))
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.joe.mepe.ui.StatChip("总计时长", com.joe.mepe.ui.timetrack.fmtMinutes(total), Modifier.weight(1f))
+            com.joe.mepe.ui.StatChip("计时记录", "${inRange.size} 条", Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(10.dp))
+
+        if (perTag.isEmpty()) {
+            EmptyHint("此范围还没有计时记录")
+        } else {
+            perTag.forEach { (t, min) ->
+                val color = com.joe.mepe.ui.theme.parseHexColor(t.color, MaterialTheme.colorScheme.primary)
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    com.joe.mepe.ui.ColorDot(color, sizeDp = 10)
+                    Spacer(Modifier.width(8.dp))
+                    Text(t.name, Modifier.width(84.dp), style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                    Text(
+                        com.joe.mepe.ui.timetrack.fmtMinutes(min),
+                        style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Box(
+                        Modifier.weight(1f).height(6.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant, androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
+                    ) {
+                        val frac = if (total > 0) min.toDouble() / total else 0.0
+                        Box(
+                            Modifier.fillMaxWidth(frac.toFloat()).height(6.dp)
+                                .background(color, androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
+                        )
+                    }
+                    Text(
+                        if (total > 0) " ${(min * 100 / total)}%" else "",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        val days14 = (13 downTo 0).map { today.minusDays(it.toLong()) }
+        val daily = days14.map { d -> records.filter { it.date == d.toString() }.sumOf { it.minutes() }.toDouble() }
+        if (daily.any { it > 0 }) {
+            Text("近 14 天每日时长", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            BarChart(daily, days14.map { "${it.monthValue}/${it.dayOfMonth}" })
         }
     }
 }

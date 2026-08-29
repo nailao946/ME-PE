@@ -367,7 +367,7 @@ private fun DraggableTaskGroup(
             .sortedWith(compareBy({ -it.priority }, { it.sortOrder }))
     }
     Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-        SwipeReveal(onEdit = { onEdit(task) }, onDelete = { onDelete(task) }) {
+        SwipeReveal(onEdit = { onEdit(task) }, onDelete = { onDelete(task) }, locked = draggingKey != null) {
             DraggableCard(
                 itemKey = mainKey,
                 draggingKey = draggingKey, dragOffset = dragOffset,
@@ -380,7 +380,7 @@ private fun DraggableTaskGroup(
             val key = "s${task.id}_${sub.id}"
             registerKey(key, sub.id)
             Box(Modifier.padding(start = 24.dp, top = 4.dp)) {
-                SwipeReveal(onEdit = { onEdit(sub) }, onDelete = { onDelete(sub) }) {
+                SwipeReveal(onEdit = { onEdit(sub) }, onDelete = { onDelete(sub) }, locked = draggingKey != null) {
                     DraggableCard(
                         itemKey = key,
                         draggingKey = draggingKey, dragOffset = dragOffset,
@@ -489,8 +489,8 @@ private fun TaskCard(
         Modifier.fillMaxWidth().clickable { onOpen(task) },
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (done) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-            else MaterialTheme.colorScheme.surface
+            // 已完成也保持不透明（左滑动作层在卡片下层，半透明会透出按钮）
+            containerColor = if (done) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
@@ -623,6 +623,28 @@ private fun TaskDetailSheet(
             }
 
             Spacer(Modifier.height(12.dp))
+
+            // 打卡统计：近 30 天完成次数 / 打卡率 / 连续打卡天数
+            val days30 = (29 downTo 0).map { date.minusDays(it.toLong()) }
+            val due30 = days30.count { d -> TaskLogic.occursOnDate(task, d) }
+            val done30 = days30.count { d -> TaskLogic.isDoneOn(task, d, completions) }
+            var streak = 0
+            run {
+                var d = date
+                var guard = 0
+                while (guard++ < 400 && TaskLogic.occursOnDate(task, d) && TaskLogic.isDoneOn(task, d, completions)) {
+                    streak++
+                    d = d.minusDays(1)
+                }
+            }
+            if (due30 > 0) {
+                com.joe.mepe.ui.StatRow(listOf(
+                    Triple("近30天完成", "$done30 次", null),
+                    Triple("打卡率", "${done30 * 100 / due30}%", null),
+                    Triple("连续打卡", "$streak 天", null),
+                ))
+                Spacer(Modifier.height(10.dp))
+            }
 
             // 量化任务：进度控制
             if (task.type == TaskTypes.QUANTITATIVE && task.quantitativeTarget != null && task.quantitativeTarget!! > 0) {

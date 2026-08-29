@@ -2,6 +2,10 @@ package com.joe.mepe.ui
 
 import kotlin.math.roundToInt
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.input.pointer.pointerInput
@@ -553,14 +557,17 @@ fun colorForGoal(colorIdx: Int, fallback: Color): Color = when (colorIdx) {
     else -> fallback
 }
 
-/** 预设调色板（颜色选择器用） */
+/** 预设调色板（颜色选择器用，24 色精选） */
 val ColorPresets = listOf(
-    0xFFE5484D, 0xFFE0603C, 0xFFE0A93C, 0xFFD9B23C,
-    0xFF7CB342, 0xFF2E9E5B, 0xFF2BA8A8, 0xFF4FC3F7,
-    0xFF4F6EF7, 0xFF7C5CE0, 0xFFE05C8A, 0xFF8A8F9E,
+    0xFFE5484D, 0xFFE0603C, 0xFFE07B39, 0xFFE0A93C,
+    0xFFD9B23C, 0xFFA8C03C, 0xFF7CB342, 0xFF2E9E5B,
+    0xFF2BA8A8, 0xFF3AA6B8, 0xFF4FC3F7, 0xFF4A8CF7,
+    0xFF4F6EF7, 0xFF6C5CE7, 0xFF7C5CE0, 0xFF9B59B6,
+    0xFFC25CE0, 0xFFE05C8A, 0xFFE05570, 0xFFB85C5C,
+    0xFF8A8F9E, 0xFF6B7280, 0xFF5A6472, 0xFF3E4756,
 )
 
-/** 颜色选择器：预设色板 + 自定义 #RRGGBB 输入 */
+/** 颜色选择器：圆形颜料盘（点色块即选，无需输入代码） */
 @Composable
 fun ColorPickerDialog(
     title: String,
@@ -574,15 +581,21 @@ fun ColorPickerDialog(
         Card(shape = MaterialTheme.shapes.large) {
             Column(Modifier.padding(16.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "点圆形色块选择颜色",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
                 ColorPresets.chunked(4).forEach { row ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                         row.forEach { c ->
                             val col = Color(c)
                             val selected = colorToHex(col) == colorToHex(current)
                             Box(
                                 Modifier
-                                    .size(38.dp)
+                                    .size(40.dp)
                                     .background(col, CircleShape)
                                     .border(
                                         if (selected) 3.dp else 1.dp,
@@ -600,20 +613,6 @@ fun ColorPickerDialog(
                         }
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(40.dp).background(current, MaterialTheme.shapes.small)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small))
-                    Spacer(Modifier.width(10.dp))
-                    OutlinedTextField(
-                        value = hex,
-                        onValueChange = { s -> hex = s.take(7) },
-                        label = { Text("自定义 #RRGGBB") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        shape = MaterialTheme.shapes.small
-                    )
-                }
                 Spacer(Modifier.height(12.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onDismiss) { Text("取消") }
@@ -626,22 +625,34 @@ fun ColorPickerDialog(
 
 /**
  * 左滑露出「编辑 / 删除」图标动作；滑过一半吸附打开，否则弹回。
- * 内容列（卡片/行）只能向左拖动，动作区固定 116dp。
+ * 动作区随滑动进度淡入（关闭时完全隐藏，拖动排序等场景不会露出来），
+ * 并按内容圆角裁剪，右侧不会突出直角。locked=true 时禁用左滑并弹回（拖动排序中用）。
  */
 @Composable
 fun SwipeReveal(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
+    locked: Boolean = false,
+    cornerDp: Int = 14,
     content: @Composable () -> Unit,
 ) {
     val maxSwipePx = with(androidx.compose.ui.platform.LocalDensity.current) { 116.dp.toPx() }
     val offsetX = remember { androidx.compose.animation.core.Animatable(0f) }
     val scope = rememberCoroutineScope()
 
+    // 锁定（如正在拖动排序）时弹回
+    androidx.compose.runtime.LaunchedEffect(locked) {
+        if (locked && offsetX.value != 0f) offsetX.animateTo(0f, tween(180))
+    }
+
     Box(modifier.fillMaxWidth()) {
+        // 动作层：整体按滑动进度淡入（绘制期求值，动画流畅），右侧圆角与卡片一致
         Row(
-            Modifier.matchParentSize(),
+            Modifier
+                .matchParentSize()
+                .androidx_graphicsAlpha { ((-offsetX.value) / (maxSwipePx / 4f)).coerceIn(0f, 1f) }
+                .androidx_clipEnd(cornerDp),
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -652,7 +663,7 @@ fun SwipeReveal(
                     .background(Color(0xFF3E7BFA))
                     .clickable {
                         onEdit()
-                        scope.launch { offsetX.animateTo(0f, androidx.compose.animation.core.tween(180)) }
+                        scope.launch { offsetX.animateTo(0f, tween(180)) }
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -665,26 +676,27 @@ fun SwipeReveal(
                     .background(MaterialTheme.colorScheme.error)
                     .clickable {
                         onDelete()
-                        scope.launch { offsetX.animateTo(0f, androidx.compose.animation.core.tween(180)) }
+                        scope.launch { offsetX.animateTo(0f, tween(180)) }
                     },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Filled.Delete, "删除", tint = Color.White, modifier = Modifier.size(20.dp))
             }
         }
+        // 内容层：向左滑出露出动作
         Box(
             Modifier
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
-                .pointerInput(Unit) {
+                .then(if (locked) Modifier else Modifier.pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onDragEnd = {
                             scope.launch {
                                 val target = if (offsetX.value < -maxSwipePx / 2) -maxSwipePx else 0f
-                                offsetX.animateTo(target, androidx.compose.animation.core.tween(200))
+                                offsetX.animateTo(target, tween(200))
                             }
                         },
                         onDragCancel = {
-                            scope.launch { offsetX.animateTo(0f, androidx.compose.animation.core.tween(200)) }
+                            scope.launch { offsetX.animateTo(0f, tween(200)) }
                         },
                         onHorizontalDrag = { change, fl ->
                             change.consume()
@@ -693,7 +705,19 @@ fun SwipeReveal(
                             }
                         }
                     )
-                }
+                })
         ) { content() }
     }
 }
+
+/** 动作层按绘制期 alpha 淡入（跟随 Animatable 动画不触发重组） */
+private fun Modifier.androidx_graphicsAlpha(alpha: () -> Float): Modifier =
+    this.then(
+        Modifier.graphicsLayer { this.alpha = alpha() }
+    )
+
+/** 动作层右侧圆角裁剪，与内容卡片圆角一致 */
+private fun Modifier.androidx_clipEnd(cornerDp: Int): Modifier =
+    this.then(
+        Modifier.clip(RoundedCornerShape(topEnd = cornerDp.dp, bottomEnd = cornerDp.dp))
+    )
