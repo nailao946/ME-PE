@@ -1,5 +1,8 @@
 package com.joe.mepe.ui.timetrack
 
+import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -200,6 +203,8 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
     }
 
     val rev = DataBus.rev
+    val ctx = LocalContext.current
+    val notifPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val today = LocalDate.now()
     val tags = remember(rev) { Repos.timeTags() }
     val running = remember(rev, tick) { Repos.runningRecord() }
@@ -208,6 +213,20 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
     val todayRecords = records.filter { it.date == today.toString() && it.endTime != null }
     val todayTotalMin = todayRecords.sumOf { it.minutes() }
     val runningTag = running?.let { r -> tags.find { it.id == r.tagId } }
+
+    // 计时开始/停止 与 通知栏前台服务 同步
+    fun beginTimer(tagId: Int) {
+        Repos.startTimer(tagId)
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.POST_NOTIFICATIONS)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) notifPerm.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        com.joe.mepe.data.TimerNotificationService.start(ctx)
+    }
+    fun endTimer(tagId: Int) {
+        Repos.stopTimer(tagId)
+        com.joe.mepe.data.TimerNotificationService.stop(ctx)
+    }
 
     val fallbackColor = MaterialTheme.colorScheme.primary
     val distSlices = remember(rev) {
@@ -255,7 +274,7 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
                                 )
                             }
                             OutlinedButton(
-                                onClick = { Repos.stopTimer(running.tagId) },
+                                onClick = { endTimer(running.tagId) },
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                                 shape = MaterialTheme.shapes.small
                             ) {
@@ -268,12 +287,9 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
                 }
             }
 
-            // 番茄钟
-            item(key = "pomodoro") { PomodoroCard(onOpenSettings = { showPomoSettings = true }) }
-
-            // 时间标签
+            // 时间标签（在番茄钟上方）
             item(key = "sec_tags") {
-                SectionLabelRow("时间标签", "点击开始计时") {
+                SectionLabelRow("标签计时", "点击开始计时") {
                     TextButton(onClick = { addingTag = true }) { Text("＋ 新标签") }
                 }
             }
@@ -286,11 +302,14 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
                 val mins = todayRecords.filter { it.tagId == t.id }.sumOf { it.minutes() }
                 TagRow(
                     tag = t, isRunning = isRunning, todayMinutes = mins,
-                    onToggle = { if (isRunning) Repos.stopTimer(t.id) else Repos.startTimer(t.id) },
+                    onToggle = { if (isRunning) endTimer(t.id) else beginTimer(t.id) },
                     onEdit = { editingTag = t },
                     onDelete = { Repos.deleteTimeTag(t.id) },
                 )
             }
+
+            // 番茄钟
+            item(key = "pomodoro") { PomodoroCard(onOpenSettings = { showPomoSettings = true }) }
 
             // 今日记录
             item(key = "sec_records") { SectionLabelRow("今日记录", null, null) }

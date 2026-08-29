@@ -1,6 +1,7 @@
 package com.joe.mepe.ui.goals
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
@@ -80,6 +82,7 @@ import com.joe.mepe.ui.colorForGoal
 import com.joe.mepe.ui.rememberData
 import com.joe.mepe.ui.theme.parseHexColor
 import java.time.LocalDate
+import kotlin.math.roundToLong
 
 private val frameNames = listOf("短期目标", "长期目标", "灵感目标")
 
@@ -96,6 +99,7 @@ fun GoalsScreen(nav: (String) -> Unit) {
     var editingParentForSub by remember { mutableStateOf<Int?>(null) }
     var creating by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<Goal?>(null) }
+    var quantGoal by remember { mutableStateOf<Goal?>(null) }
     var expandedIds by rememberSaveable { mutableStateOf(setOf<Int>()) }
     var showTagManager by remember { mutableStateOf(false) }
 
@@ -112,8 +116,8 @@ fun GoalsScreen(nav: (String) -> Unit) {
             icon = Icons.Filled.Flag,
             subtitle = "目标拆解与进度追踪",
             actions = {
-                IconButton(onClick = { showTagManager = true }) {
-                    Icon(Icons.Filled.Label, "管理标签", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                IconButton(onClick = { showTagManager = true }, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.Filled.Label, "管理标签", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(21.dp))
                 }
                 QuickLinks(Routes.GOALS, nav)
             }
@@ -166,6 +170,7 @@ fun GoalsScreen(nav: (String) -> Unit) {
                             onEdit = { editing = it },
                             onDelete = { deleteTarget = it },
                             onAddSub = { editingParentForSub = it },
+                            onQuant = { quantGoal = it },
                         )
                     }
                 }
@@ -202,6 +207,7 @@ fun GoalsScreen(nav: (String) -> Unit) {
         }, { deleteTarget = null })
     }
     if (showTagManager) TagManagerDialog(onClose = { showTagManager = false })
+    quantGoal?.let { g -> SubGoalQuantDialog(g, onClose = { quantGoal = null }) }
 }
 
 @Composable
@@ -238,6 +244,7 @@ private fun GoalNode(
     onEdit: (Goal) -> Unit,
     onDelete: (Goal) -> Unit,
     onAddSub: (Int) -> Unit,
+    onQuant: (Goal) -> Unit,
 ) {
     val children = goals.filter { it.parentId == goal.id && !it.isDeleted }
     val subTasks = tasks.filter { it.goalId == goal.id && it.parentTaskId == null && !it.isDeleted }
@@ -245,9 +252,9 @@ private fun GoalNode(
     val color = goalDisplayColor(goal, MaterialTheme.colorScheme.primary)
     val tag = goal.tagId?.let { tid -> tags.find { it.id == tid } }
     val expanded = goal.id !in expandedIds // 默认展开，点按折叠
-    var menuOpen by remember { mutableStateOf(false) }
 
     Column(Modifier.padding(horizontal = if (depth == 0) 12.dp else 0.dp, vertical = 4.dp)) {
+        com.joe.mepe.ui.SwipeReveal(onEdit = { onEdit(goal) }, onDelete = { onDelete(goal) }) {
         Card(
             Modifier
                 .fillMaxWidth()
@@ -294,31 +301,192 @@ private fun GoalNode(
                             modifier = Modifier.clickable { onToggleExpand(goal.id) }
                         )
                     }
-                    Box {
-                        IconButton(onClick = { menuOpen = true }) {
-                            Icon(Icons.Filled.MoreVert, "操作", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(text = { Text("编辑") }, leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { menuOpen = false; onEdit(goal) })
-                            DropdownMenuItem(text = { Text("添加子目标") }, leadingIcon = { Icon(Icons.Filled.SubdirectoryArrowRight, null) }, onClick = { menuOpen = false; onAddSub(goal.id) })
-                            DropdownMenuItem(
-                                text = { Text(if (goal.isArchived) "取消归档" else "归档") },
-                                leadingIcon = { Icon(Icons.Filled.Archive, null) },
-                                onClick = { menuOpen = false; goal.isArchived = !goal.isArchived; Repos.updateGoal(goal) }
-                            )
-                            DropdownMenuItem(text = { Text("删除", color = MaterialTheme.colorScheme.error) }, leadingIcon = { Icon(Icons.Filled.Delete, null, tint = MaterialTheme.colorScheme.error) }, onClick = { menuOpen = false; onDelete(goal) })
+                    if (children.isEmpty() && subTasks.isEmpty()) {
+                        IconButton(onClick = { onAddSub(goal.id) }, modifier = Modifier.size(34.dp)) {
+                            Icon(Icons.Filled.Add, "添加子目标", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                         }
                     }
                 }
             }
         }
+        }
+        // 子目标以任务行的形式展示：可勾选完成、点击弹出量化/进度窗口
         if (children.isNotEmpty() && expanded) {
             children.forEach { child ->
-                GoalNode(child, goals, tags, tasks, today, depth + 1, expandedIds, onToggleExpand, onEdit, onDelete, onAddSub)
+                SubGoalRow(child, goals, tags, tasks, today, depth + 1, expandedIds, onToggleExpand, onEdit, onDelete, onAddSub, onQuant)
             }
         }
     }
 }
+
+/** 子目标任务行：左侧勾选完成；点击行弹出量化/进度窗口；右侧笔=编辑 */
+@Composable
+private fun SubGoalRow(
+    goal: Goal,
+    goals: List<Goal>,
+    tags: List<GoalTag>,
+    tasks: List<com.joe.mepe.data.TaskItem>,
+    today: LocalDate,
+    depth: Int,
+    expandedIds: Set<Int>,
+    onToggleExpand: (Int) -> Unit,
+    onEdit: (Goal) -> Unit,
+    onDelete: (Goal) -> Unit,
+    onAddSub: (Int) -> Unit,
+    onQuant: (Goal) -> Unit,
+) {
+    val color = goalDisplayColor(goal, MaterialTheme.colorScheme.primary)
+    val progress = TaskLogic.goalProgress(goal, tasks, today)
+    val done = progress >= 0.999
+    val children = goals.filter { it.parentId == goal.id && !it.isDeleted }
+    val quant = goal.quantitativeTarget != null && goal.quantitativeTarget!! > 0
+
+    Column(Modifier.padding(start = (14 + depth * 14).dp, end = 2.dp, top = 2.dp, bottom = 2.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                .clickable { onQuant(goal) }
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 完成勾选圈
+            Box(
+                Modifier
+                    .size(22.dp)
+                    .border(2.dp, if (done) color else MaterialTheme.colorScheme.outline, CircleShape)
+                    .background(if (done) color else Color.Transparent, CircleShape)
+                    .clickable {
+                        if (quant) {
+                            goal.quantitativeCurrent =
+                                if (done) (goal.quantitativeStart ?: 0.0) else goal.quantitativeTarget
+                        } else {
+                            goal.progress = if (done) 0.0 else 1.0
+                        }
+                        Repos.updateGoal(goal)
+                        DataBus.bump()
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                if (done) Icon(Icons.Filled.Check, "完成", tint = Color.White, modifier = Modifier.size(13.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    goal.name,
+                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
+                    textDecoration = if (done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
+                    color = if (done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                val meta = buildString {
+                    if (quant) append("量化 ${(goal.quantitativeCurrent ?: 0.0)}/${goal.quantitativeTarget}${goal.quantitativeUnit?.let { " $it" } ?: ""}")
+                    else append("进度 ${(progress * 100).toInt()}%")
+                    if (children.isNotEmpty()) append(" · 子目标 ${children.size}")
+                }
+                Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Box(
+                Modifier.size(28.dp).clickable { onEdit(goal) },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Edit, "编辑", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(15.dp))
+            }
+        }
+        if (children.isNotEmpty() && goal.id !in expandedIds) {
+            children.forEach { c ->
+                SubGoalRow(c, goals, tags, tasks, today, depth + 1, expandedIds, onToggleExpand, onEdit, onDelete, onAddSub, onQuant)
+            }
+        }
+    }
+}
+
+/** 子目标量化/进度窗口：量化目标加减数值，普通目标调进度百分比 */
+@Composable
+private fun SubGoalQuantDialog(g0: Goal, onClose: () -> Unit) {
+    val rev = DataBus.rev
+    val g = remember(rev) { Repos.goals().find { it.id == g0.id } } ?: return
+    val quant = g.quantitativeTarget != null && g.quantitativeTarget!! > 0
+    val start = g.quantitativeStart ?: 0.0
+    val target = g.quantitativeTarget ?: 1.0
+    val cur = g.quantitativeCurrent ?: start
+    val step = 1.0
+
+    Dialog(onDismissRequest = onClose) {
+        Card(shape = MaterialTheme.shapes.large) {
+            Column(Modifier.padding(20.dp)) {
+                Text(g.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(14.dp))
+                if (quant) {
+                    Text(
+                        "${fmtG(cur)} / ${fmtG(target)}${g.quantitativeUnit?.let { " $it" } ?: ""}",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    androidx.compose.material3.Slider(
+                        value = ((cur - start) / (target - start)).coerceIn(0.0, 1.0).toFloat(),
+                        onValueChange = { f ->
+                            g.quantitativeCurrent = start + (target - start) * f.toDouble()
+                            Repos.updateGoal(g)
+                        },
+                        onValueChangeFinished = { DataBus.bump() },
+                        enabled = target > start
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = { g.quantitativeCurrent = (g.quantitativeCurrent ?: start) - step; Repos.updateGoal(g); DataBus.bump() },
+                            shape = RoundedCornerShape(10.dp)
+                        ) { Text("−1") }
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = { g.quantitativeCurrent = (g.quantitativeCurrent ?: start) + step; Repos.updateGoal(g); DataBus.bump() },
+                            shape = RoundedCornerShape(10.dp)
+                        ) { Text("+1") }
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = { g.quantitativeCurrent = (g.quantitativeCurrent ?: start) + 5; Repos.updateGoal(g); DataBus.bump() },
+                            shape = RoundedCornerShape(10.dp)
+                        ) { Text("+5") }
+                        androidx.compose.material3.Button(
+                            onClick = { g.quantitativeCurrent = target; Repos.updateGoal(g); DataBus.bump() },
+                            shape = RoundedCornerShape(10.dp)
+                        ) { Text("完成") }
+                    }
+                } else {
+                    Text(
+                        "进度 ${(g.progress.coerceIn(0.0, 1.0) * 100).toInt()}%",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    androidx.compose.material3.Slider(
+                        value = g.progress.coerceIn(0.0, 1.0).toFloat(),
+                        onValueChange = { f -> g.progress = f.toDouble(); Repos.updateGoal(g) },
+                        onValueChangeFinished = { DataBus.bump() }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(0.0, 0.25, 0.5, 0.75, 1.0).forEach { p ->
+                            androidx.compose.material3.OutlinedButton(
+                                onClick = { g.progress = p; Repos.updateGoal(g); DataBus.bump() },
+                                shape = RoundedCornerShape(10.dp)
+                            ) { Text("${(p * 100).toInt()}%") }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onClose) { Text("关闭") }
+                }
+            }
+        }
+    }
+}
+
+private fun fmtG(d: Double): String =
+    if (kotlin.math.abs(d - d.roundToLong()) < 0.001) d.roundToLong().toString() else "%.1f".format(d)
 
 /** 标签管理（增删改 + 自定义颜色） */
 @Composable

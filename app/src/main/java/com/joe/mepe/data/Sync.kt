@@ -79,10 +79,55 @@ object GitHubSync {
     private fun parseObj(text: String): JsonObject =
         JsonStore.json.parseToJsonElement(text) as JsonObject
 
+    /**
+     * 确保默认同步仓库存在：在用户账号下创建私有仓库 ME-OKR 并写入配置（已存在则直接用）。
+     * 登录后与上传/下载前（仓库为空时）调用，用户无需手填仓库名。
+     */
+    suspend fun ensureRepo(context: Context): String = withContext(Dispatchers.IO) {
+        val conf = SyncConfig.load(context)
+        require(conf.pat.isNotBlank()) { "尚未登录 GitHub 账号" }
+
+        var login = conf.account
+        if (login.isBlank()) {
+            login = GitHubLogin.fetchAccountName(conf.pat)
+        }
+        if (login.isBlank()) throw RuntimeException("无法获取 GitHub 用户名")
+
+        val repoName = "$login/ME-OKR"
+        val payload = buildJsonObject {
+            put("name", "ME-OKR")
+            put("private", true)
+            put("auto_init", false)
+        }.toString()
+        try {
+            val req = Request.Builder().url("$API/user/repos")
+                .header("Authorization", "Bearer ${conf.pat}")
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "ME-PE")
+                .post(payload.toRequestBody("application/json".toMediaType()))
+                .build()
+            http.newCall(req).execute().use { r ->
+                // 422 = 仓库已存在，直接使用
+                if (!r.isSuccessful && r.code != 422) {
+                    throw RuntimeException("创建仓库失败：HTTP ${r.code}")
+                }
+            }
+        } catch (e: RuntimeException) {
+            if (!e.message.orEmpty().contains("422")) throw e
+        }
+
+        conf.repo = repoName
+        if (conf.branch.isBlank()) conf.branch = "main"
+        if (conf.account.isBlank()) conf.account = login
+        SyncConfig.save(context, conf)
+        repoName
+    }
+
     /** 上传 JsonData 全部文件到仓库 data/ 目录（逐文件 commit，已存在则带 sha 更新） */
     suspend fun push(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
-        require(conf.pat.isNotBlank() && conf.repo.isNotBlank()) { "请先填写 GitHub Token 和仓库名" }
+        require(conf.pat.isNotBlank()) { "请先登录 GitHub 账号或填写 Token" }
+        if (conf.repo.isBlank()) ensureRepo(context)
         val files = JsonStore.allFiles()
         if (files.isEmpty()) return@withContext "没有可上传的数据"
         var okCount = 0
@@ -121,7 +166,8 @@ object GitHubSync {
     /** 从仓库 data/ 目录下载并覆盖本地 JsonData（先做本地备份） */
     suspend fun pull(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
-        require(conf.pat.isNotBlank() && conf.repo.isNotBlank()) { "请先填写 GitHub Token 和仓库名" }
+        require(conf.pat.isNotBlank()) { "请先登录 GitHub 账号或填写 Token" }
+        if (conf.repo.isBlank()) ensureRepo(context)
         val items: List<JsonObject> = try {
             val text = httpCall(conf, "$API/repos/${conf.repo}/contents/data?ref=${conf.branch}", "GET", null)
             val el = JsonStore.json.parseToJsonElement(text)

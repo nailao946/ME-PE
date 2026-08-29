@@ -1,6 +1,18 @@
 package com.joe.mepe.ui
 
+import kotlin.math.roundToInt
 import androidx.compose.animation.animateContentSize
+import kotlinx.coroutines.launch
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -609,5 +621,79 @@ fun ColorPickerDialog(
                 }
             }
         }
+    }
+}
+
+/**
+ * 左滑露出「编辑 / 删除」图标动作；滑过一半吸附打开，否则弹回。
+ * 内容列（卡片/行）只能向左拖动，动作区固定 116dp。
+ */
+@Composable
+fun SwipeReveal(
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val maxSwipePx = with(androidx.compose.ui.platform.LocalDensity.current) { 116.dp.toPx() }
+    val offsetX = remember { androidx.compose.animation.core.Animatable(0f) }
+    val scope = rememberCoroutineScope()
+
+    Box(modifier.fillMaxWidth()) {
+        Row(
+            Modifier.matchParentSize(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier
+                    .width(58.dp)
+                    .fillMaxHeight()
+                    .background(Color(0xFF3E7BFA))
+                    .clickable {
+                        onEdit()
+                        scope.launch { offsetX.animateTo(0f, androidx.compose.animation.core.tween(180)) }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Edit, "编辑", tint = Color.White, modifier = Modifier.size(20.dp))
+            }
+            Box(
+                Modifier
+                    .width(58.dp)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.error)
+                    .clickable {
+                        onDelete()
+                        scope.launch { offsetX.animateTo(0f, androidx.compose.animation.core.tween(180)) }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Delete, "删除", tint = Color.White, modifier = Modifier.size(20.dp))
+            }
+        }
+        Box(
+            Modifier
+                .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            scope.launch {
+                                val target = if (offsetX.value < -maxSwipePx / 2) -maxSwipePx else 0f
+                                offsetX.animateTo(target, androidx.compose.animation.core.tween(200))
+                            }
+                        },
+                        onDragCancel = {
+                            scope.launch { offsetX.animateTo(0f, androidx.compose.animation.core.tween(200)) }
+                        },
+                        onHorizontalDrag = { change, fl ->
+                            change.consume()
+                            scope.launch {
+                                offsetX.snapTo((offsetX.value + fl).coerceIn(-maxSwipePx, 0f))
+                            }
+                        }
+                    )
+                }
+        ) { content() }
     }
 }

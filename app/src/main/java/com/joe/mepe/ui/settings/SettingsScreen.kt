@@ -263,7 +263,14 @@ fun SettingsScreen(nav: (String) -> Unit) {
                                     fresh.account = GitHubLogin.fetchAccountName(r)
                                     SyncConfig.save(ctx, fresh)
                                     syncPat = r
-                                    loginMsg = "✓ 授权成功，Token 已自动保存"
+                                    loginMsg = "✓ 授权成功，正在自动创建同步仓库 ME-OKR…"
+                                    // 自动创建私有仓库并写入配置，用户无需手填仓库名
+                                    loginMsg = try {
+                                        val repo = GitHubSync.ensureRepo(ctx)
+                                        "✓ 授权成功，已配置仓库 $repo，可直接上传/下载"
+                                    } catch (e: Exception) {
+                                        "✓ 授权成功，但自动建仓失败：${e.message}（可手动填仓库名）"
+                                    }
                                 }
                             } catch (e: Exception) {
                                 loginMsg = "✗ ${e.message}"

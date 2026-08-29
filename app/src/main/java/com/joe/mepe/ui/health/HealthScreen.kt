@@ -8,6 +8,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.Chair
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FitnessCenter
@@ -39,6 +41,7 @@ import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -388,59 +391,119 @@ fun WaterTab() {
     val rev = DataBus.rev
     val today = remember(rev) { LocalDate.now() }
     val containers = remember(rev) { Repos.waterContainers() }
-    val todayRecords = remember(rev) { healthRecords(HealthTypes.WATER).filter { it.date == today.toString() } }
+    val allWater = remember(rev) { healthRecords(HealthTypes.WATER) }
+    val todayRecords = allWater.filter { it.date == today.toString() }.sortedBy { it.createdAt }
     val total = todayRecords.sumOf { it.value }
     var goal by remember(rev) { mutableStateOf(Repos.getSetting("water_goal", "2000").toDoubleOrNull() ?: 2000.0) }
     val days = lastNDays(14)
-    val records = remember(rev) { healthRecords(HealthTypes.WATER) }
+    val waterColor = Color(0xFF4FC3F7)
     var addingContainer by remember { mutableStateOf(false) }
     var cName by remember { mutableStateOf("") }
     var cMl by remember { mutableStateOf("") }
 
-    SectionCard(title = "今日喝水") {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    fun deleteRecord(id: Int) {
+        val all = Repos.health().toMutableList()
+        all.removeAll { it.id == id }
+        Repos.saveHealth(all)
+    }
+
+    SectionCard(title = null) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             com.joe.mepe.ui.ProgressRing(
                 progress = (total / goal).coerceIn(0.0, 1.0),
-                sizeDp = 120, stroke = 12f, color = Color(0xFF4FC3F7),
+                sizeDp = 158, stroke = 14f, color = waterColor,
                 centerContent = {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Filled.WaterDrop, null, tint = Color(0xFF4FC3F7), modifier = Modifier.size(20.dp))
-                        Text("${(total / goal * 100).toInt()}%", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Icon(Icons.Filled.WaterDrop, null, tint = waterColor, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "${(goal - total).coerceAtLeast(0.0).toInt()}",
+                            style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold
+                        )
+                        Text("还需 ml", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             )
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) {
-                Text("${total.toInt()} / ${goal.toInt()} ml", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(6.dp))
-                Stepper("每日目标（ml）", goal.toInt().toString(), { goal = (goal - 100).coerceAtLeast(500.0); Repos.setSetting("water_goal", goal.toInt().toString()) }, { goal += 100; Repos.setSetting("water_goal", goal.toInt().toString()) })
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        containers.forEach { c ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.WaterDrop, null, tint = Color(0xFF4FC3F7), modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("${c.name}（${c.capacityMl.toInt()}ml）", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                Button(onClick = { Repos.addHealth(HealthTypes.WATER, today, c.capacityMl) }, shape = MaterialTheme.shapes.small) {
-                    Text("+${c.capacityMl.toInt()}")
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "今日 ${total.toInt()} / ${goal.toInt()} ml · ${(total / goal * 100).toInt()}%",
+                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = waterColor
+            )
+            Spacer(Modifier.height(14.dp))
+            // 快捷加量：三个等宽对称按钮
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(100, 250, 500).forEach { ml ->
+                    Button(
+                        onClick = { Repos.addHealth(HealthTypes.WATER, today, ml.toDouble()) },
+                        modifier = Modifier.weight(1f).height(40.dp),
+                        shape = MaterialTheme.shapes.medium,
+                        colors = ButtonDefaults.buttonColors(containerColor = waterColor.copy(alpha = 0.15f), contentColor = waterColor)
+                    ) { Text("+$ml", fontWeight = FontWeight.SemiBold) }
                 }
             }
-        }
-        if (containers.isEmpty()) EmptyHint("先添加一个喝水容器", Icons.Filled.WaterDrop)
-        Row {
-            TextButton(onClick = { addingContainer = true }) { Text("＋ 自定义容器") }
-            if (total > 0) {
+            // 自定义容器
+            if (containers.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    containers.take(3).forEach { c ->
+                        OutlinedButton(
+                            onClick = { Repos.addHealth(HealthTypes.WATER, today, c.capacityMl) },
+                            modifier = Modifier.weight(1f).height(40.dp),
+                            shape = MaterialTheme.shapes.medium
+                        ) {
+                            Icon(Icons.Filled.WaterDrop, null, Modifier.size(14.dp), tint = waterColor)
+                            Spacer(Modifier.width(4.dp))
+                            Text("${c.name} +${c.capacityMl.toInt()}", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+                if (containers.size > 3) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("还有 ${containers.size - 3} 个容器在「管理」中添加", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                com.joe.mepe.ui.Stepper(
+                    "每日目标 ml", goal.toInt().toString(),
+                    { goal = (goal - 100).coerceAtLeast(500.0); Repos.setSetting("water_goal", goal.toInt().toString()) },
+                    { goal += 100; Repos.setSetting("water_goal", goal.toInt().toString()) },
+                    modifier = Modifier.weight(1f)
+                )
                 TextButton(onClick = {
                     val all = Repos.health().toMutableList()
                     val last = all.lastOrNull { it.type == HealthTypes.WATER && it.date == today.toString() }
                     if (last != null) { all.remove(last); Repos.saveHealth(all) }
-                }) { Text("撤销一次") }
+                }, enabled = total > 0) { Text("撤销一次") }
             }
         }
     }
+
+    SectionCard(title = "今日记录（${todayRecords.size}）") {
+        if (todayRecords.isEmpty()) {
+            EmptyHint("今天还没喝水，点上面按钮记一笔", Icons.Filled.WaterDrop)
+        } else {
+            todayRecords.reversed().forEach { r ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Filled.WaterDrop, null, tint = waterColor, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("${r.value.toInt()} ml", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text(r.createdAt.toString().take(16).replace('T', ' '), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = { deleteRecord(r.id) }, modifier = Modifier.size(30.dp)) {
+                        Icon(Icons.Outlined.Delete, "删除", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(17.dp))
+                    }
+                }
+            }
+        }
+    }
+
     SectionCard(title = "近14天喝水（ml）") {
-        val vals = days.map { d -> records.filter { it.date == d.toString() }.sumOf { it.value } }
+        val vals = days.map { d -> allWater.filter { it.date == d.toString() }.sumOf { it.value } }
         BarChart(vals, days.map { fmtDay(it) })
     }
 

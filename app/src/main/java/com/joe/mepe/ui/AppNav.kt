@@ -106,24 +106,35 @@ fun QuickLinks(current: String, nav: (String) -> Unit) {
 fun AppRoot() {
     var route by rememberSaveable { mutableStateOf(Routes.TASKS) }
     var mainTab by rememberSaveable { mutableStateOf(Routes.TASKS) }
+    // 方向感知转场：进入二级页=从右滑入，返回主 Tab=向下滑入，避免来回跳变
+    var forward by rememberSaveable { mutableStateOf(true) }
+
+    val overlays = setOf(Routes.MAP, Routes.REVIEW, Routes.SETTINGS, Routes.MODULES)
 
     fun navigate(target: String) {
         if (target == Routes.BACK) {
+            forward = false
             route = mainTab
             return
         }
+        forward = !(target in Routes.mainTabs && route in overlays)
         if (target in Routes.mainTabs) mainTab = target
         route = target
     }
 
     val isMain = route in Routes.mainTabs
     androidx.activity.compose.BackHandler(enabled = !isMain) {
-        route = mainTab
+        navigate(Routes.BACK)
     }
 
     Scaffold(
         bottomBar = {
-            if (isMain) {
+            // 底栏随页面平滑出现/消失，内容区 padding 跟随动画，不再跳变
+            androidx.compose.animation.AnimatedVisibility(
+                visible = isMain,
+                enter = androidx.compose.animation.slideInVertically(tween(220)) { it } + fadeIn(tween(220)),
+                exit = androidx.compose.animation.slideOutVertically(tween(180)) { it } + fadeOut(tween(140))
+            ) {
                 NavigationBar(
                     containerColor = MaterialTheme.colorScheme.surface,
                     tonalElevation = 2.dp
@@ -162,8 +173,7 @@ fun AppRoot() {
             AnimatedContent(
                 targetState = route,
                 transitionSpec = {
-                    val goingDown = targetState == Routes.BACK
-                    if (goingDown)
+                    if (!forward)
                         (slideInVerticallyDown() togetherWith fadeOut(tween(140)))
                     else
                         (fadeIn(tween(160)) + slideInHorizontallyRight()) togetherWith fadeOut(tween(120))
