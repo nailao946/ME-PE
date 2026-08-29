@@ -30,6 +30,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Pause
@@ -119,6 +121,10 @@ object PomodoroEngine {
     var autoStartBreaks by mutableStateOf(true)
     var autoStartPomodoros by mutableStateOf(false)
 
+    // 标签绑定：专注段时间记到工作标签，休息段记到休息标签（未绑定则不记）
+    var workTagId by mutableStateOf<Int?>(null)
+    var breakTagId by mutableStateOf<Int?>(null)
+
     fun loadSettings() {
         workMinutes = Repos.getSetting("PomodoroWorkMinutes", "25").toIntOrNull()?.coerceAtLeast(1) ?: 25
         shortMinutes = Repos.getSetting("PomodoroShortBreakMinutes", "5").toIntOrNull()?.coerceAtLeast(1) ?: 5
@@ -126,6 +132,8 @@ object PomodoroEngine {
         beforeLong = Repos.getSetting("PomodoroBeforeLongBreak", "4").toIntOrNull()?.coerceAtLeast(1) ?: 4
         autoStartBreaks = Repos.getSetting("PomodoroAutoStartBreaks", "1") == "1"
         autoStartPomodoros = Repos.getSetting("PomodoroAutoStartPomodoros", "0") == "1"
+        workTagId = Repos.getSetting("pomodoro_work_tag", "").toIntOrNull()
+        breakTagId = Repos.getSetting("pomodoro_break_tag", "").toIntOrNull()
     }
 
     fun saveSettings() {
@@ -135,6 +143,22 @@ object PomodoroEngine {
         Repos.setSetting("PomodoroBeforeLongBreak", beforeLong.toString())
         Repos.setSetting("PomodoroAutoStartBreaks", if (autoStartBreaks) "1" else "0")
         Repos.setSetting("PomodoroAutoStartPomodoros", if (autoStartPomodoros) "1" else "0")
+        Repos.setSetting("pomodoro_work_tag", workTagId?.toString() ?: "")
+        Repos.setSetting("pomodoro_break_tag", breakTagId?.toString() ?: "")
+    }
+
+    /** 依据引擎状态对齐标签计时记录：专注→工作标签，休息→休息标签；暂停/停止→结束记录 */
+    fun syncRecord() {
+        val wantTag = when {
+            !running || paused -> null
+            phase == 0 -> workTagId
+            else -> breakTagId
+        }
+        val current = Repos.runningRecord()
+        when {
+            wantTag == null -> if (current != null) Repos.stopTimer(current.tagId)
+            current == null || current.tagId != wantTag -> Repos.startTimer(wantTag)
+        }
     }
 
     fun segmentMinutes(): Int = when (phase) { 0 -> workMinutes; 1 -> shortMinutes; else -> longMinutes }
@@ -155,6 +179,7 @@ object PomodoroEngine {
     fun start() {
         if (!running) beginSegment()
         else if (paused) { paused = false; startEpochMs = System.currentTimeMillis() }
+        syncRecord()
     }
 
     fun pause() {
@@ -162,6 +187,7 @@ object PomodoroEngine {
             accumulatedMs += System.currentTimeMillis() - startEpochMs
             paused = true
         }
+        syncRecord()
     }
 
     /** 界面 tick 时检查段是否走完；返回刚完成的专注段分钟数（记一次专注） */
@@ -189,6 +215,7 @@ object PomodoroEngine {
             phase = 0
             if (autoStartPomodoros) beginSegment() else stop()
         }
+        syncRecord()
         return savedMinutes
     }
 
@@ -200,9 +227,10 @@ object PomodoroEngine {
         } else phase = 0
         if ((phase == 0 && autoStartPomodoros) || (phase != 0 && autoStartBreaks)) beginSegment()
         else stop()
+        syncRecord()
     }
 
-    fun stop() { running = false; paused = false; accumulatedMs = 0L }
+    fun stop() { running = false; paused = false; accumulatedMs = 0L; syncRecord() }
 }
 
 fun fmtMs(ms: Long): String {
@@ -344,7 +372,7 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
             }
 
             // 番茄钟
-            item(key = "pomodoro") { PomodoroCard(onOpenSettings = { showPomoSettings = true }) }
+            item(key = "pomodoro") { PomodoroCard(tick = tick, onOpenSettings = { showPomoSettings = true }) }
 
             // 今日记录
             item(key = "sec_records") { SectionLabelRow("今日记录", null, null) }
@@ -429,9 +457,10 @@ private fun PomoCircleButton(
     }
 }
 
-/** 番茄钟卡片：大进度环 + 阶段色 + 控制 */
+/** 番茄钟卡片：大进度环 + 阶段色 + 控制（tick 每 500ms 变化驱动剩余时间重算走字） */
 @Composable
-private fun PomodoroCard(onOpenSettings: () -> Unit) {
+private fun PomodoroCard(tick: Int, onOpenSettings: () -> Unit) {
+    val _tick = tick // 读取 tick：LazyColumn item 依赖它重组，时间才会走
     val running = PomodoroEngine.running
     val paused = PomodoroEngine.paused
     val phase = PomodoroEngine.phase
@@ -444,6 +473,7 @@ private fun PomodoroCard(onOpenSettings: () -> Unit) {
         1 -> MaterialTheme.colorScheme.tertiary
         else -> MaterialTheme.colorScheme.secondary
     }
+    val timeTags = remember { Repos.timeTags() }
     SectionCard {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("番茄钟", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -456,6 +486,17 @@ private fun PomodoroCard(onOpenSettings: () -> Unit) {
             IconButton(onClick = onOpenSettings, modifier = Modifier.size(30.dp)) {
                 Icon(Icons.Filled.Settings, "番茄钟设置", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
             }
+        }
+        val boundLine = listOfNotNull(
+            PomodoroEngine.workTagId?.let { id -> timeTags.find { it.id == id }?.name }?.let { "专注→$it" },
+            PomodoroEngine.breakTagId?.let { id -> timeTags.find { it.id == id }?.name }?.let { "休息→$it" }
+        ).joinToString(" · ")
+        if (boundLine.isNotBlank()) {
+            Text(
+                boundLine,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
         Spacer(Modifier.height(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -686,6 +727,8 @@ private fun TimeTagEditDialog(initial: TimeTag?, onClose: () -> Unit) {
 @Composable
 private fun PomodoroSettingsDialog(onClose: () -> Unit) {
     val eng = PomodoroEngine
+    val timeTags = remember { Repos.timeTags() }
+    var pickFor by remember { mutableStateOf<Int?>(null) } // 0=工作标签 1=休息标签
     Dialog(onDismissRequest = onClose) {
         Card(shape = MaterialTheme.shapes.large) {
             Column(Modifier.padding(16.dp)) {
@@ -698,11 +741,82 @@ private fun PomodoroSettingsDialog(onClose: () -> Unit) {
                 ToggleRow("专注后自动开始休息", eng.autoStartBreaks, { eng.autoStartBreaks = it })
                 ToggleRow("休息后自动开始专注", eng.autoStartPomodoros, { eng.autoStartPomodoros = it })
                 Spacer(Modifier.height(10.dp))
+                // 标签绑定：专注段时间记到工作标签，休息段记到休息标签
+                TagBindRow("工作标签（专注计时归入）", eng.workTagId, timeTags) { pickFor = 0 }
+                Spacer(Modifier.height(6.dp))
+                TagBindRow("休息标签（休息计时归入）", eng.breakTagId, timeTags) { pickFor = 1 }
+                Spacer(Modifier.height(10.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = { eng.saveSettings(); onClose() }) { Text("保存") }
                 }
             }
         }
+    }
+
+    pickFor?.let { which ->
+        Dialog(onDismissRequest = { pickFor = null }) {
+            Card(shape = MaterialTheme.shapes.large) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(
+                        if (which == 0) "选择工作标签" else "选择休息标签",
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LazyColumn(Modifier.height(300.dp)) {
+                        item {
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    if (which == 0) eng.workTagId = null else eng.breakTagId = null
+                                    pickFor = null
+                                }.padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "不绑定（番茄钟不自动计时）",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        items(timeTags, key = { it.id }) { t ->
+                            val selected = if (which == 0) eng.workTagId == t.id else eng.breakTagId == t.id
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    if (which == 0) eng.workTagId = t.id else eng.breakTagId = t.id
+                                    pickFor = null
+                                }.padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                ColorDot(parseHexColor(t.color, MaterialTheme.colorScheme.primary), sizeDp = 14)
+                                Spacer(Modifier.width(10.dp))
+                                Text(t.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                                if (selected) Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 标签绑定行：显示当前绑定的标签名，点击打开选择 */
+@Composable
+private fun TagBindRow(label: String, tagId: Int?, tags: List<TimeTag>, onClick: () -> Unit) {
+    val name = tagId?.let { id -> tags.find { it.id == id }?.name }
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Text(
+            name ?: "未绑定",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (name != null) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (name != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Icon(Icons.Filled.ChevronRight, null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier
+            .padding(start = 6.dp).size(16.dp))
     }
 }
 
