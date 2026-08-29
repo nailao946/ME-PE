@@ -464,42 +464,35 @@ private fun PomodoroCard(onOpenSettings: () -> Unit) {
     }
 }
 
-/** 时间标签按钮（只有文字：点=开始/停止计时；开始时弹跳动画，计时中呼吸动画+实底高亮） */
+/** 时间标签按钮（只有文字，文字完全静止）：点=开始/停止计时；开始时颜色填充，计时中仅底色明暗呼吸 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TimeTagChip(tag: TimeTag, isRunning: Boolean, onClick: () -> Unit) {
     val color = parseHexColor(tag.color, MaterialTheme.colorScheme.primary)
-    val bg by animateColorAsState(if (isRunning) color else color.copy(alpha = 0.13f), tween(250), label = "bg")
-    val border by animateColorAsState(if (isRunning) color else color.copy(alpha = 0.55f), tween(250), label = "border")
-    val content by animateColorAsState(if (isRunning) Color.White else color, tween(250), label = "content")
 
-    // 点击开始：弹跳一下（0.9 → 弹回 1）；计时中：轻微呼吸（0.98 ↔ 1.04）
-    val scale = remember { androidx.compose.animation.core.Animatable(1f) }
+    // 计时中：底色在 75%~100% 透明度间缓慢呼吸（只动背景，不动文字/形状）
+    val breath = remember { androidx.compose.animation.core.Animatable(1f) }
     LaunchedEffect(isRunning) {
         if (isRunning) {
-            scale.snapTo(0.9f)
-            scale.animateTo(
-                1f,
-                androidx.compose.animation.core.spring(
-                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
-                    stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
-                )
-            )
+            breath.snapTo(1f)
             while (true) {
-                scale.animateTo(1.04f, tween(800))
-                scale.animateTo(0.98f, tween(800))
+                breath.animateTo(0.75f, tween(850))
+                breath.animateTo(1f, tween(850))
             }
         } else {
-            scale.animateTo(1f, tween(200))
+            breath.snapTo(1f)
         }
     }
+
+    val bg = if (isRunning) color.copy(alpha = breath.value) else color.copy(alpha = 0.13f)
+    val border by animateColorAsState(if (isRunning) color else color.copy(alpha = 0.55f), tween(250), label = "border")
+    val content by animateColorAsState(if (isRunning) Color.White else color, tween(250), label = "content")
 
     Box(
         Modifier
             .clip(RoundedCornerShape(20.dp))
             .background(bg)
             .border(1.5.dp, border, RoundedCornerShape(20.dp))
-            .graphicsLayer { scaleX = scale.value; scaleY = scale.value }
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 9.dp)
     ) {
