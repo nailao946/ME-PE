@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudSync
@@ -194,7 +195,9 @@ private fun AppearancePage(onBack: () -> Unit) {
                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f), CircleShape)
                             .clickable { showAccentPicker = true },
                         contentAlignment = Alignment.Center
-                    ) { Text("＋", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    ) {
+                        Icon(Icons.Filled.Add, "添加", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                    }
                 }
             }
             SectionCard(title = "图标颜色（全部页面的单色图标）") {
@@ -224,7 +227,9 @@ private fun AppearancePage(onBack: () -> Unit) {
                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f), CircleShape)
                             .clickable { showIconPicker = true },
                         contentAlignment = Alignment.Center
-                    ) { Text("＋", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    ) {
+                        Icon(Icons.Filled.Add, "添加", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                    }
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -599,7 +604,11 @@ private fun AiPage(onBack: () -> Unit) {
                     )
                     aiName = ""; aiKey = ""
                     msg = "✓ 已添加供应商"
-                }, shape = MaterialTheme.shapes.small) { Text("＋ 添加供应商") }
+                }, shape = MaterialTheme.shapes.small) {
+                    Icon(Icons.Filled.Add, null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("添加供应商")
+                }
                 if (msg.isNotBlank()) {
                     Spacer(Modifier.height(6.dp))
                     Text(msg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)

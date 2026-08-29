@@ -5,6 +5,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Chair
 import androidx.compose.material.icons.filled.Check
@@ -50,11 +53,13 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -98,6 +103,7 @@ private val healthTabIcons = listOf(
 )
 
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 fun HealthScreen(nav: (String) -> Unit) {
     var tab by rememberSaveable { mutableStateOf(0) }
 
@@ -125,7 +131,15 @@ fun HealthScreen(nav: (String) -> Unit) {
             }
         }
 
-        AnimatedContent(targetState = tab, transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) }, label = "healthTab") { t ->
+        // 横向滑动切换 tab：左右滑与顶部标签联动，各页面状态独立保留
+        val pagerState = rememberPagerState(initialPage = tab) { healthTabs.size }
+        LaunchedEffect(pagerState) {
+            snapshotFlow { pagerState.currentPage }.collect { tab = it }
+        }
+        LaunchedEffect(tab) {
+            if (pagerState.currentPage != tab) pagerState.animateScrollToPage(tab)
+        }
+        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { t ->
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 when (t) {
                     0 -> HealthOverview { tab = it }
@@ -535,7 +549,11 @@ fun WaterTab() {
                 }
             }
         }
-        TextButton(onClick = { addingContainer = true }) { Text("＋ 新增容器") }
+        TextButton(onClick = { addingContainer = true }) {
+            Icon(Icons.Filled.Add, null, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("新增容器")
+        }
     }
 
     if (addingContainer || editingContainer != null) {
@@ -737,7 +755,11 @@ fun ExerciseTab() {
                 ) { Text("+1") }
             }
         }
-        TextButton(onClick = { adding = true }) { Text("＋ 添加锻炼项目") }
+        TextButton(onClick = { adding = true }) {
+            Icon(Icons.Filled.Add, null, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("添加锻炼项目")
+        }
     }
 
     SectionCard(title = "近7天锻炼量") {
@@ -898,7 +920,11 @@ fun MedicationTab() {
                 }
             }
         }
-        TextButton(onClick = { adding = true }) { Text("＋ 添加用药") }
+        TextButton(onClick = { adding = true }) {
+            Icon(Icons.Filled.Add, null, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("添加用药")
+        }
     }
 
     if (adding) MedicationEditDialog(null) { adding = false }

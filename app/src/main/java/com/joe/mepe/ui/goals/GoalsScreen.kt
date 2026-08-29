@@ -42,6 +42,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -75,6 +76,7 @@ import com.joe.mepe.ui.ColorDot
 import com.joe.mepe.ui.ConfirmDialog
 import com.joe.mepe.ui.DatePickerDialog
 import com.joe.mepe.ui.EmptyHint
+import com.joe.mepe.ui.FormDialog
 import com.joe.mepe.ui.LabeledField
 import com.joe.mepe.ui.NumberField
 import com.joe.mepe.ui.ProgressRing
@@ -170,6 +172,7 @@ fun GoalsScreen(nav: (String) -> Unit) {
     var creating by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<Goal?>(null) }
     var quantGoal by remember { mutableStateOf<Goal?>(null) }
+    var detailGoal by remember { mutableStateOf<Goal?>(null) }
     var expandedIds by rememberSaveable { mutableStateOf(setOf<Int>()) }
     var showTagManager by remember { mutableStateOf(false) }
 
@@ -310,6 +313,7 @@ fun GoalsScreen(nav: (String) -> Unit) {
                                 onToggleExpand = { id ->
                                     expandedIds = if (id in expandedIds) expandedIds - id else expandedIds + id
                                 },
+                                onShowDetail = { detailGoal = it },
                                 onEdit = { editing = it },
                                 onDelete = { deleteTarget = it },
                                 onAddSub = { editingParentForSub = it },
@@ -353,6 +357,14 @@ fun GoalsScreen(nav: (String) -> Unit) {
     }
     if (showTagManager) TagManagerDialog(onClose = { showTagManager = false })
     quantGoal?.let { g -> SubGoalQuantDialog(g, onClose = { quantGoal = null }) }
+    detailGoal?.let { g ->
+        GoalDetailSheet(
+            goal = g, goals = goals, tags = tags, tasks = tasks, timeTags = timeTags, today = today,
+            onClose = { detailGoal = null },
+            onEdit = { detailGoal = null; editing = g },
+            onAddSub = { detailGoal = null; editingParentForSub = g.id },
+        )
+    }
 }
 
 @Composable
@@ -387,6 +399,7 @@ private fun GoalNode(
     depth: Int,
     expandedIds: Set<Int>,
     onToggleExpand: (Int) -> Unit,
+    onShowDetail: (Goal) -> Unit,
     onEdit: (Goal) -> Unit,
     onDelete: (Goal) -> Unit,
     onAddSub: (Int) -> Unit,
@@ -416,7 +429,11 @@ private fun GoalNode(
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
         ) {
             Column(Modifier.padding(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                // 点击整卡 → 目标详情弹窗（展开/折叠走右侧箭头）
+                Row(
+                    Modifier.fillMaxWidth().clickable { onShowDetail(goal) },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     ProgressRing(
                         progress = progress, sizeDp = 46, stroke = 7f, color = color,
                         centerContent = {
@@ -424,7 +441,7 @@ private fun GoalNode(
                         }
                     )
                     Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f).clickable(enabled = children.isNotEmpty()) { onToggleExpand(goal.id) }) {
+                    Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.size(10.dp).background(color, CircleShape))
                             Spacer(Modifier.width(6.dp))
@@ -690,7 +707,11 @@ fun TagManagerDialog(onClose: () -> Unit) {
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = { adding = true }) { Text("＋ 新标签") }
+                    TextButton(onClick = { adding = true }) {
+                        Icon(Icons.Filled.Add, null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("新标签")
+                    }
                     TextButton(onClick = onClose) { Text("完成") }
                 }
             }
@@ -782,15 +803,7 @@ fun GoalEditDialog(initial: Goal?, parentId: Int? = null, onClose: () -> Unit) {
     val timeTags = rememberData { Repos.timeTags().toList() }
     val parentChoices = rememberData { Repos.goals().filter { it.parentId == null } }
 
-    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
-        Card(shape = MaterialTheme.shapes.large) {
-            Column(
-                Modifier
-                    .padding(16.dp)
-                    .androidx_verticalScroll()
-            ) {
-                Text(if (isNew) "新建目标" else "编辑目标", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(12.dp))
+    FormDialog(title = if (isNew) "新建目标" else "编辑目标", onClose = onClose) {
                 LabeledField("目标名称", name, { name = it })
                 Spacer(Modifier.height(8.dp))
                 LabeledField("描述（可选）", desc, { desc = it }, singleLine = false)
@@ -892,38 +905,34 @@ fun GoalEditDialog(initial: Goal?, parentId: Int? = null, onClose: () -> Unit) {
                     LabeledField("单位", quantUnit, { quantUnit = it }, placeholder = "如：本书 / km")
                 }
                 if (!isNew) ToggleRow("归档（不再展示于进行中）", archived, { archived = it })
-                Spacer(Modifier.height(14.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onClose) { Text("取消") }
-                    Button(
-                        onClick = {
-                            if (name.isBlank()) return@Button
-                            val g = (initial ?: Goal()).apply {
-                                this.name = name.trim()
-                                this.description = desc.ifBlank { null }
-                                this.timeFrame = frame
-                                this.color = colorIdx
-                                this.colorHex = colorHex
-                                this.tagId = tagId
-                                this.timeTagId = goalTimeTagId
-                                this.parentId = parentGoalId
-                                this.startDate = startDate?.atStartOfDay()
-                                this.endDate = endDate?.atTime(23, 59)
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    onClick = {
+                        if (name.isBlank()) return@Button
+                        val g = (initial ?: Goal()).apply {
+                            this.name = name.trim()
+                            this.description = desc.ifBlank { null }
+                            this.timeFrame = frame
+                            this.color = colorIdx
+                            this.colorHex = colorHex
+                            this.tagId = tagId
+                            this.timeTagId = goalTimeTagId
+                            this.parentId = parentGoalId
+                            this.startDate = startDate?.atStartOfDay()
+                            this.endDate = endDate?.atTime(23, 59)
                             this.isArchived = archived
                             if (isNew) this.createdAt = LocalDateTime.now()
                             this.updatedAt = LocalDateTime.now()
                             this.quantitativeTarget = if (useQuant) quantTarget.toDoubleOrNull() else null
                             this.quantitativeUnit = if (useQuant) quantUnit.ifBlank { null } else null
                             this.quantitativeStart = if (useQuant) (this.quantitativeStart ?: 0.0) else null
-                            }
-                            if (isNew) Repos.addGoal(g) else Repos.updateGoal(g)
-                            onClose()
-                        },
-                        enabled = name.isNotBlank()
-                    ) { Text("保存") }
-                }
-            }
-        }
+                        }
+                        if (isNew) Repos.addGoal(g) else Repos.updateGoal(g)
+                        onClose()
+                    },
+                    enabled = name.isNotBlank()
+                ) { Text("保存") }
     }
 
     if (showColorPicker) {
@@ -951,3 +960,100 @@ fun GoalEditDialog(initial: Goal?, parentId: Int? = null, onClose: () -> Unit) {
 @Composable
 private fun Modifier.androidx_verticalScroll(): Modifier =
     this.then(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()))
+
+/** 目标详情信息行 */
+@Composable
+private fun DetailInfoRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.Top) {
+        Text(
+            label, Modifier.width(92.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            value, Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+/** 目标详情底部弹窗：点击目标卡弹出，汇总展示目标全部信息 + 快捷编辑/添加子目标 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GoalDetailSheet(
+    goal: Goal,
+    goals: List<Goal>,
+    tags: List<GoalTag>,
+    tasks: List<com.joe.mepe.data.TaskItem>,
+    timeTags: List<com.joe.mepe.data.TimeTag>,
+    today: LocalDate,
+    onClose: () -> Unit,
+    onEdit: () -> Unit,
+    onAddSub: () -> Unit,
+) {
+    val rev = DataBus.rev
+    val children = remember(rev) {
+        goals.filter { it.parentId == goal.id && !it.isDeleted }.sortedBy { it.createdAt }
+    }
+    val subTasks = remember(rev) {
+        tasks.filter { it.goalId == goal.id && it.parentTaskId == null && !it.isDeleted }
+            .sortedWith(compareByDescending<com.joe.mepe.data.TaskItem> { it.priority }.thenBy { it.sortOrder })
+    }
+    val progress = TaskLogic.goalProgress(goal, tasks, today)
+    val boundTimeTag = goal.timeTagId?.let { id -> timeTags.find { it.id == id } }
+    val color = boundTimeTag?.let { parseHexColor(it.color, MaterialTheme.colorScheme.primary) }
+        ?: goalDisplayColor(goal, MaterialTheme.colorScheme.primary)
+    val tag = goal.tagId?.let { tid -> tags.find { it.id == tid } }
+    val quant = goal.quantitativeTarget != null && goal.quantitativeTarget!! > 0
+    val doneCount = subTasks.count { TaskLogic.isDoneOn(it, today, Repos.completions()) }
+
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onClose, sheetState = sheetState) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ProgressRing(
+                    progress = progress, sizeDp = 54, stroke = 8f, color = color,
+                    centerContent = {
+                        Text("${(progress * 100).toInt()}", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    }
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(goal.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(
+                        frameNames[goal.timeFrame] + if (goal.isArchived) " · 已归档" else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            goal.description?.takeIf { it.isNotBlank() }?.let { DetailInfoRow("描述", it) }
+            if (tag != null) DetailInfoRow("标签", tag.name)
+            if (boundTimeTag != null) DetailInfoRow("绑定时间标签", boundTimeTag.name)
+            goal.startDate?.let { DetailInfoRow("开始", it.toLocalDate().toString()) }
+            goal.endDate?.let { DetailInfoRow("截止", it.toLocalDate().toString()) }
+            if (quant) DetailInfoRow(
+                "量化进度",
+                "${fmtG(goal.quantitativeCurrent ?: 0.0)} / ${fmtG(goal.quantitativeTarget!!)}${goal.quantitativeUnit?.let { " $it" } ?: ""}"
+            )
+            if (children.isNotEmpty()) DetailInfoRow("子目标", "${children.size} 个：" + children.joinToString("、") { it.name })
+            if (subTasks.isNotEmpty()) DetailInfoRow("任务", "$doneCount/${subTasks.size} 已完成")
+            DetailInfoRow("创建于", goal.createdAt.toLocalDate().toString())
+            Spacer(Modifier.height(10.dp))
+            com.joe.mepe.ui.RoundedProgressBar(
+                progress = progress.toFloat(), heightDp = 10, color = color
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                androidx.compose.material3.OutlinedButton(onClick = onAddSub, modifier = Modifier.weight(1f)) {
+                    Text("添加子目标")
+                }
+                Button(onClick = onEdit, modifier = Modifier.weight(1f)) { Text("编辑") }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}

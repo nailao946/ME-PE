@@ -888,7 +888,10 @@ private fun TaskDetailSheet(
                             DataBus.bump()
                         },
                         shape = RoundedCornerShape(10.dp)
-                    ) { Text(if (isUpdate) "设为" else "＋加", fontWeight = FontWeight.SemiBold) }
+                    ) {
+                        if (isUpdate) Text("设为", fontWeight = FontWeight.SemiBold)
+                        else Icon(Icons.Filled.Add, "加", modifier = Modifier.size(20.dp))
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 Slider(

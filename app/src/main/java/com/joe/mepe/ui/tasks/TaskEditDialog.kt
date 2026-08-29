@@ -35,8 +35,12 @@ import com.joe.mepe.data.TaskItem
 import com.joe.mepe.data.TaskTypes
 import com.joe.mepe.ui.CheckRow
 import com.joe.mepe.ui.DatePickerDialog
+import com.joe.mepe.ui.FormDialog
 import com.joe.mepe.ui.LabeledField
 import com.joe.mepe.ui.NumberField
+import com.joe.mepe.ui.OptionItem
+import com.joe.mepe.ui.OptionPickerDialog
+import com.joe.mepe.ui.SelectorField
 import com.joe.mepe.ui.Segmented
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -73,12 +77,9 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
 
     var showStartPick by remember { mutableStateOf(false) }
     var showEndPick by remember { mutableStateOf(false) }
+    var showPatternPick by remember { mutableStateOf(false) }
 
-    Dialog(onDismissRequest = onClose) {
-        Card {
-            Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
-                Text(if (isNew) "新建任务" else "编辑任务", style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(12.dp))
+    FormDialog(title = if (isNew) "新建任务" else "编辑任务", onClose = onClose) {
 
                 LabeledField("任务标题", title, { title = it }, placeholder = "要做什么？")
                 Spacer(Modifier.height(8.dp))
@@ -152,16 +153,8 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
                         }
                     }
                     TaskTypes.PERIODIC -> {
-                        Segmented(listOf("每日", "工作日", "周末", "每周…", "每月…", "间隔"),
-                            when (pattern) {
-                                RecPatterns.DAILY -> 0; RecPatterns.WEEKDAY -> 1; RecPatterns.WEEKEND -> 2
-                                RecPatterns.WEEKLY -> 3; RecPatterns.MONTHLY -> 4; else -> 5
-                            }) { i ->
-                            pattern = when (i) {
-                                0 -> RecPatterns.DAILY; 1 -> RecPatterns.WEEKDAY; 2 -> RecPatterns.WEEKEND
-                                3 -> RecPatterns.WEEKLY; 4 -> RecPatterns.MONTHLY; else -> RecPatterns.INTERVAL
-                            }
-                        }
+                        // 重复频率：单行选择器，点开选项弹窗（替代原来一排芯片）
+                        SelectorField("重复频率", patternLabel(pattern, intervalDays)) { showPatternPick = true }
                         Spacer(Modifier.height(8.dp))
                         when (pattern) {
                             RecPatterns.WEEKLY -> {
@@ -206,12 +199,10 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
                     }
                 }
 
-                Spacer(Modifier.height(14.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onClose) { Text("取消") }
-                    Spacer(Modifier.height(0.dp))
-                    Button(
-                        onClick = {
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    onClick = {
                             if (title.isBlank()) return@Button
                             val t = (initial ?: TaskItem()).apply {
                                 this.title = title.trim()
@@ -234,18 +225,41 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
                                 if (isNew) { this.isCompleted = false; this.createdAt = LocalDateTime.now() }
                                 this.updatedAt = LocalDateTime.now()
                             }
-                            if (isNew) Repos.addTask(t) else Repos.updateTask(t)
-                            onClose()
-                        },
-                        enabled = title.isNotBlank()
-                    ) { Text("保存") }
-                }
-            }
-        }
+                    if (isNew) Repos.addTask(t) else Repos.updateTask(t)
+                    onClose()
+                },
+                enabled = title.isNotBlank()
+            ) { Text("保存") }
     }
 
     if (showStartPick) DatePickerDialog(startDate, { startDate = it; showStartPick = false }, { showStartPick = false })
     if (showEndPick) DatePickerDialog(endDate ?: startDate, { endDate = it; showEndPick = false }, { showEndPick = false })
+    if (showPatternPick) {
+        OptionPickerDialog(
+            title = "重复频率",
+            options = listOf(
+                OptionItem(RecPatterns.DAILY.toString(), "每日", "每天都打卡"),
+                OptionItem(RecPatterns.WEEKDAY.toString(), "工作日", "周一至周五"),
+                OptionItem(RecPatterns.WEEKEND.toString(), "周末", "周六、周日"),
+                OptionItem(RecPatterns.WEEKLY.toString(), "每周", "自选星期几"),
+                OptionItem(RecPatterns.MONTHLY.toString(), "每月", "指定每月几号"),
+                OptionItem(RecPatterns.INTERVAL.toString(), "自定义间隔", "每隔几天执行一次"),
+            ),
+            selectedKey = pattern.toString(),
+            onPick = { pattern = it.toInt(); showPatternPick = false },
+            onDismiss = { showPatternPick = false }
+        )
+    }
+}
+
+/** 频率选择器当前值文案 */
+private fun patternLabel(pattern: Int, intervalDays: String): String = when (pattern) {
+    RecPatterns.DAILY -> "每日"
+    RecPatterns.WEEKDAY -> "工作日"
+    RecPatterns.WEEKEND -> "周末"
+    RecPatterns.WEEKLY -> "每周"
+    RecPatterns.MONTHLY -> "每月"
+    else -> "每隔${intervalDays.toIntOrNull() ?: 2}天"
 }
 
 /** 选择芯片（横滑，圆角小胶囊；dot 颜色可空） */

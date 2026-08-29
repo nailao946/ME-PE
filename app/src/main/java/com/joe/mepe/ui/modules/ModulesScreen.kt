@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,9 +37,11 @@ import androidx.compose.material.icons.filled.SelfImprovement
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material.icons.filled.Work
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -65,6 +68,7 @@ import com.joe.mepe.ui.ColorPickerDialog
 import com.joe.mepe.ui.ConfirmDialog
 import com.joe.mepe.ui.DatePickerDialog
 import com.joe.mepe.ui.EmptyHint
+import com.joe.mepe.ui.FormDialog
 import com.joe.mepe.ui.LabeledField
 import com.joe.mepe.ui.LineChart
 import com.joe.mepe.ui.QuickLinks
@@ -148,8 +152,11 @@ fun ModulesScreen(nav: (String) -> Unit) {
                     OutlinedButton(
                         onClick = { deleteTarget = m },
                         shape = MaterialTheme.shapes.small,
-                        modifier = Modifier.width(52.dp)
-                    ) { Text("删", color = MaterialTheme.colorScheme.error) }
+                        modifier = Modifier.width(46.dp),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Icon(Icons.Outlined.Delete, "删除", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(17.dp))
+                    }
                 }
             }
         }
@@ -157,7 +164,7 @@ fun ModulesScreen(nav: (String) -> Unit) {
             Button(onClick = { creating = true }, shape = MaterialTheme.shapes.small, modifier = Modifier.weight(1f)) {
                 Icon(Icons.Filled.Add, null, Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("＋ 新建模块", fontWeight = FontWeight.SemiBold)
+                Text("新建模块", fontWeight = FontWeight.SemiBold)
             }
         }
         Spacer(Modifier.height(24.dp))
@@ -183,99 +190,102 @@ fun ModuleEditDialog(initial: CustomModule?, onClose: () -> Unit) {
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var colorHex by remember { mutableStateOf(initial?.colorHex ?: "#4F6EF7") }
     var iconIdx by remember { mutableStateOf(initial?.icon ?: 0) }
+    // 字段必须用不可变列表整体替换：原地改元素（fields[i]=…）Compose 检测不到变化，
+    // 会整屏"冻结"——打字/点按钮都没反应，直到别的状态变化才一次性刷出来
     var fields by remember {
         mutableStateOf(
-            initial?.fields?.map { it.copy() }?.toMutableList()
-                ?: mutableListOf(CustomModuleField(key = "value", label = "数值", type = "number", unit = ""))
+            initial?.fields?.map { it.copy() }
+                ?: listOf(CustomModuleField(key = "value", label = "数值", type = "number", unit = ""))
         )
+    }
+    fun updateField(i: Int, f: CustomModuleField) { fields = fields.toMutableList().also { it[i] = f } }
+    fun removeField(i: Int) { fields = fields.toMutableList().also { it.removeAt(i) } }
+    fun addField() {
+        fields = fields + CustomModuleField(key = "f${System.currentTimeMillis() % 100000}", label = "", type = "number")
     }
     var pickingColor by remember { mutableStateOf(false) }
 
-    Dialog(onDismissRequest = onClose) {
-        Card(shape = MaterialTheme.shapes.large) {
-            Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
-                Text(if (initial == null) "新建模块" else "编辑模块", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(10.dp))
-                LabeledField("模块名称", name, { name = it }, placeholder = "如：跑步 / 日记")
-                Spacer(Modifier.height(8.dp))
-                // 图标
-                Text("图标", style = MaterialTheme.typography.titleSmall)
-                ModuleIconList.chunked(8).forEach { rowIcons ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        rowIcons.forEach { icon ->
-                            val idx = ModuleIconList.indexOf(icon)
-                            Box(
-                                Modifier
-                                    .size(34.dp)
-                                    .background(
-                                        if (idx == iconIdx) colorSafe(colorHex).copy(alpha = 0.2f) else Color.Transparent,
-                                        MaterialTheme.shapes.extraSmall
-                                    )
-                                    .clickable { iconIdx = idx },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(icon, null, tint = if (idx == iconIdx) colorSafe(colorHex) else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(19.dp))
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+    FormDialog(title = if (initial == null) "新建模块" else "编辑模块", onClose = onClose) {
+        LabeledField("模块名称", name, { name = it }, placeholder = "如：跑步 / 日记")
+        Spacer(Modifier.height(8.dp))
+        // 图标
+        Text("图标", style = MaterialTheme.typography.titleSmall)
+        ModuleIconList.chunked(8).forEach { rowIcons ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                rowIcons.forEach { icon ->
+                    val idx = ModuleIconList.indexOf(icon)
                     Box(
-                        Modifier.size(30.dp).background(colorSafe(colorHex), CircleShape)
-                            .clickable { pickingColor = true }
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("点击色块自定义颜色", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Spacer(Modifier.height(10.dp))
-                Text("字段定义", style = MaterialTheme.typography.titleSmall)
-                fields.forEachIndexed { i, f ->
-                    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("字段 ${i + 1}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                            if (fields.size > 1) {
-                                TextButton(onClick = { fields.removeAt(i) }) { Text("移除", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium) }
-                            }
-                        }
-                        LabeledField("字段名", f.label, { fields[i] = f.copy(label = it, key = if (f.key.isBlank()) autoKey(it) else f.key) })
-                        Spacer(Modifier.height(4.dp))
-                        Segmented(fieldTypeNames, fieldTypes.indexOf(f.type).coerceAtLeast(0)) { ti ->
-                            fields[i] = f.copy(type = fieldTypes[ti])
-                        }
-                        if (f.type == "number" || f.type == "text") {
-                            LabeledField("单位（可选）", f.unit ?: "", { fields[i] = f.copy(unit = it.ifBlank { null }) })
-                        }
-                        if (f.type == "select") {
-                            LabeledField("候选值（逗号分隔）", f.options ?: "", { fields[i] = f.copy(options = it) }, placeholder = "如：好,中,差")
-                        }
+                        Modifier
+                            .size(34.dp)
+                            .background(
+                                if (idx == iconIdx) colorSafe(colorHex).copy(alpha = 0.2f) else Color.Transparent,
+                                MaterialTheme.shapes.extraSmall
+                            )
+                            .clickable { iconIdx = idx },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(icon, null, tint = if (idx == iconIdx) colorSafe(colorHex) else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(19.dp))
                     }
-                }
-                TextButton(onClick = {
-                    fields.add(CustomModuleField(key = "f${System.currentTimeMillis() % 100000}", label = "", type = "number"))
-                }) { Text("＋ 添加字段") }
-                Spacer(Modifier.height(10.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onClose) { Text("取消") }
-                    Button(
-                        onClick = {
-                            if (name.isBlank()) return@Button
-                            val validFields = fields.filter { it.label.isNotBlank() }
-                                .mapIndexed { i, f -> f.copy(key = if (f.key.isBlank()) "f${i + 1}" else f.key) }
-                            val m = (initial ?: CustomModule()).apply {
-                                this.name = name.trim()
-                                this.colorHex = colorHex
-                                this.icon = iconIdx
-                                this.fields = validFields
-                            }
-                            if (initial == null) Repos.addCustomModule(m) else Repos.updateCustomModule(m)
-                            onClose()
-                        },
-                        enabled = name.isNotBlank() && fields.any { it.label.isNotBlank() }
-                    ) { Text("保存") }
                 }
             }
         }
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(30.dp).background(colorSafe(colorHex), CircleShape)
+                    .clickable { pickingColor = true }
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("点击色块自定义颜色", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("字段定义", style = MaterialTheme.typography.titleSmall)
+        fields.forEachIndexed { i, f ->
+            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("字段 ${i + 1}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    if (fields.size > 1) {
+                        IconButton(onClick = { removeField(i) }, modifier = Modifier.size(30.dp)) {
+                            Icon(Icons.Outlined.Delete, "移除字段", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+                LabeledField("字段名", f.label, { updateField(i, f.copy(label = it, key = if (f.key.isBlank()) autoKey(it) else f.key)) })
+                Spacer(Modifier.height(4.dp))
+                Segmented(fieldTypeNames, fieldTypes.indexOf(f.type).coerceAtLeast(0)) { ti ->
+                    updateField(i, f.copy(type = fieldTypes[ti]))
+                }
+                if (f.type == "number" || f.type == "text") {
+                    LabeledField("单位（可选）", f.unit ?: "", { updateField(i, f.copy(unit = it.ifBlank { null })) })
+                }
+                if (f.type == "select") {
+                    LabeledField("候选值（逗号分隔）", f.options ?: "", { updateField(i, f.copy(options = it)) }, placeholder = "如：好,中,差")
+                }
+            }
+        }
+        OutlinedButton(onClick = { addField() }, shape = MaterialTheme.shapes.small) {
+            Icon(Icons.Filled.Add, null, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("添加字段")
+        }
+        Spacer(Modifier.height(12.dp))
+        Button(
+            modifier = Modifier.fillMaxWidth().height(46.dp),
+            onClick = {
+                if (name.isBlank()) return@Button
+                val validFields = fields.filter { it.label.isNotBlank() }
+                    .mapIndexed { idx, f -> f.copy(key = if (f.key.isBlank()) "f${idx + 1}" else f.key) }
+                val m = (initial ?: CustomModule()).apply {
+                    this.name = name.trim()
+                    this.colorHex = colorHex
+                    this.icon = iconIdx
+                    this.fields = validFields
+                }
+                if (initial == null) Repos.addCustomModule(m) else Repos.updateCustomModule(m)
+                onClose()
+            },
+            enabled = name.isNotBlank() && fields.any { it.label.isNotBlank() }
+        ) { Text("保存") }
     }
     if (pickingColor) {
         ColorPickerDialog(
@@ -298,75 +308,62 @@ fun ModuleRecordDialog(m: CustomModule, onClose: () -> Unit) {
     var showDatePick by remember { mutableStateOf(false) }
     val values = remember { mutableStateOf(m.fields.associate { it.key to "" }) }
 
-    Dialog(onDismissRequest = onClose) {
-        Card(shape = MaterialTheme.shapes.large) {
-            Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        ModuleIconList.getOrElse(m.icon) { Icons.Filled.Extension }, null,
-                        tint = colorSafe(m.colorHex), modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("记录 · ${m.name}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = { showDatePick = true }, shape = MaterialTheme.shapes.small) {
-                    Text("日期：$date" + if (date == LocalDate.now()) "（今天）" else "")
-                }
-                Spacer(Modifier.height(6.dp))
-                m.fields.forEach { f ->
-                    val v = values.value[f.key] ?: ""
-                    when (f.type) {
-                        "number" -> com.joe.mepe.ui.NumberField(
-                            f.label, v,
-                            { s -> values.value = values.value + (f.key to s) },
-                            suffix = f.unit
-                        )
-                        "text" -> LabeledField(f.label, v, { s -> values.value = values.value + (f.key to s) })
-                        "time" -> {
-                            val parts = v.split(':')
-                            var hh = parts.getOrNull(0)?.toIntOrNull() ?: 8
-                            var mm = parts.getOrNull(1)?.toIntOrNull() ?: 0
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-                                Text(f.label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                                TimeField("时间", hh, mm, { h, mi ->
-                                    hh = h; mm = mi
-                                    values.value = values.value + (f.key to "%02d:%02d".format(h, mi))
-                                })
-                            }
-                        }
-                        "bool" -> ToggleRow(f.label, v == "true", { c -> values.value = values.value + (f.key to c.toString()) })
-                        "select" -> {
-                            Text(f.label, style = MaterialTheme.typography.titleSmall)
-                            val opts = (f.options ?: "").split(',').map { it.trim() }.filter { it.isNotBlank() }
-                            Segmented(opts.ifEmpty { listOf("选项1", "选项2") }, opts.indexOf(v).coerceAtLeast(0)) { i ->
-                                values.value = values.value + (f.key to opts.getOrElse(i) { "" })
-                            }
-                        }
+    FormDialog(title = "记录 · ${m.name}", onClose = onClose) {
+        OutlinedButton(onClick = { showDatePick = true }, shape = MaterialTheme.shapes.small) {
+            Text("日期：$date" + if (date == LocalDate.now()) "（今天）" else "")
+        }
+        Spacer(Modifier.height(6.dp))
+        m.fields.forEach { f ->
+            val v = values.value[f.key] ?: ""
+            when (f.type) {
+                "number" -> com.joe.mepe.ui.NumberField(
+                    f.label, v,
+                    { s -> values.value = values.value + (f.key to s) },
+                    suffix = f.unit
+                )
+                "text" -> LabeledField(f.label, v, { s -> values.value = values.value + (f.key to s) })
+                "time" -> {
+                    val parts = v.split(':')
+                    var hh = parts.getOrNull(0)?.toIntOrNull() ?: 8
+                    var mm = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                        Text(f.label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        TimeField("时间", hh, mm, { h, mi ->
+                            hh = h; mm = mi
+                            values.value = values.value + (f.key to "%02d:%02d".format(h, mi))
+                        })
                     }
-                    Spacer(Modifier.height(6.dp))
                 }
-                LabeledField("备注（可选）", values.value["__note"] ?: "", { s -> values.value = values.value + ("__note" to s) })
-                Spacer(Modifier.height(10.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onClose) { Text("取消") }
-                    Button(onClick = {
-                        val saved = values.value.filterKeys { it != "__note" }
-                            .filterValues { it.isNotBlank() }
-                        Repos.addModuleRecord(
-                            m.id,
-                            CustomModuleRecord(
-                                date = date.toString(),
-                                time = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm")),
-                                values = saved,
-                                note = values.value["__note"]?.ifBlank { null },
-                            )
-                        )
-                        onClose()
-                    }) { Text("保存记录") }
+                "bool" -> ToggleRow(f.label, v == "true", { c -> values.value = values.value + (f.key to c.toString()) })
+                "select" -> {
+                    Text(f.label, style = MaterialTheme.typography.titleSmall)
+                    val opts = (f.options ?: "").split(',').map { it.trim() }.filter { it.isNotBlank() }
+                    Segmented(opts.ifEmpty { listOf("选项1", "选项2") }, opts.indexOf(v).coerceAtLeast(0)) { i ->
+                        values.value = values.value + (f.key to opts.getOrElse(i) { "" })
+                    }
                 }
             }
+            Spacer(Modifier.height(6.dp))
         }
+        LabeledField("备注（可选）", values.value["__note"] ?: "", { s -> values.value = values.value + ("__note" to s) })
+        Spacer(Modifier.height(12.dp))
+        Button(
+            modifier = Modifier.fillMaxWidth().height(46.dp),
+            onClick = {
+                val saved = values.value.filterKeys { it != "__note" }
+                    .filterValues { it.isNotBlank() }
+                Repos.addModuleRecord(
+                    m.id,
+                    CustomModuleRecord(
+                        date = date.toString(),
+                        time = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm")),
+                        values = saved,
+                        note = values.value["__note"]?.ifBlank { null },
+                    )
+                )
+                onClose()
+            }
+        ) { Text("保存记录") }
     }
     if (showDatePick) {
         DatePickerDialog(date, { date = it; showDatePick = false }, { showDatePick = false })
@@ -381,45 +378,49 @@ fun ModuleHistoryDialog(m: CustomModule, onClose: () -> Unit, onEditRecord: (Cus
     val records = mod.records.sortedBy { it.date }
     val numberField = mod.fields.firstOrNull { it.type == "number" }
 
-    Dialog(onDismissRequest = onClose) {
-        Card(shape = MaterialTheme.shapes.large) {
-            Column(Modifier.padding(16.dp)) {
-                Text("${mod.name} · 历史（${records.size} 条）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(8.dp))
-                if (records.isEmpty()) EmptyHint("还没有记录")
-                Column(Modifier.height(340.dp).verticalScroll(rememberScrollState())) {
-                    numberField?.let { f ->
-                        SectionCard(title = "${f.label} 趋势") {
-                            val vals = records.map { it.values[f.key]?.toDoubleOrNull() ?: 0.0 }
-                            if (vals.count { it > 0 } >= 2) {
-                                LineChart(vals, records.map { it.date.take(5) })
-                            } else Text("数据不足", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                    records.reversed().forEach { r ->
-                        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("${r.date} ${r.time}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(
-                                    r.values.entries.joinToString(" · ") { e ->
-                                        val f = mod.fields.find { it.key == e.key }
-                                        "${f?.label ?: e.key}: ${e.value}${f?.unit?.let { " $it" } ?: ""}"
-                                    }.ifBlank { "（无字段值）" } + (r.note?.let { " · $it" } ?: ""),
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                            TextButton(onClick = {
-                                val all = Repos.customModules()
-                                val mm = all.firstOrNull { it.id == mod.id }
-                                if (mm != null) { mm.records.removeIf { it.id == r.id }; Repos.saveCustomModules(all) }
-                            }) { Text("删", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium) }
-                        }
-                    }
+    FormDialog(title = "${mod.name} · 历史", onClose = onClose) {
+        Text(
+            "共 ${records.size} 条记录",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(6.dp))
+        if (records.isEmpty()) EmptyHint("还没有记录")
+        Column(Modifier.height(340.dp).verticalScroll(rememberScrollState())) {
+            numberField?.let { f ->
+                SectionCard(title = "${f.label} 趋势") {
+                    val vals = records.map { it.values[f.key]?.toDoubleOrNull() ?: 0.0 }
+                    if (vals.count { it > 0 } >= 2) {
+                        LineChart(vals, records.map { it.date.take(5) })
+                    } else Text("数据不足", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onClose) { Text("关闭") }
+            }
+            records.reversed().forEach { r ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${r.date} ${r.time}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            r.values.entries.joinToString(" · ") { e ->
+                                val f = mod.fields.find { it.key == e.key }
+                                "${f?.label ?: e.key}: ${e.value}${f?.unit?.let { " $it" } ?: ""}"
+                            }.ifBlank { "（无字段值）" } + (r.note?.let { " · $it" } ?: ""),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    IconButton(onClick = {
+                        val all = Repos.customModules()
+                        val mm = all.firstOrNull { it.id == mod.id }
+                        if (mm != null) {
+                            mm.records.removeIf { it.id == r.id }
+                            Repos.saveCustomModules(all)
+                            DataBus.bump()
+                        }
+                    }, modifier = Modifier.size(30.dp)) {
+                        Icon(Icons.Outlined.Delete, "删除记录", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                    }
                 }
             }
         }
+        Spacer(Modifier.height(12.dp))
+        OutlinedButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("关闭") }
     }
 }

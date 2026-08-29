@@ -45,6 +45,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Remove
@@ -577,6 +579,117 @@ fun ConfirmDialog(
         confirmButton = { TextButton(onClick = onConfirm) { Text("确定", color = MaterialTheme.colorScheme.error) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
+}
+
+// ============ 统一表单弹窗（新建/编辑类） ============
+
+/** 统一的新建/编辑弹窗容器：大圆角卡片 + 标题栏（右上角关闭）+ 可滚动内容 + 底部按钮区 */
+@Composable
+fun FormDialog(
+    title: String,
+    onClose: () -> Unit,
+    footer: (@Composable androidx.compose.foundation.layout.RowScope.() -> Unit)? = null,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    Dialog(onDismissRequest = onClose) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onClose, modifier = Modifier.size(38.dp)) {
+                        Icon(Icons.Filled.Close, "关闭", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                    }
+                }
+                Column(
+                    Modifier.padding(horizontal = 20.dp).heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                    content = content
+                )
+                if (footer != null) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 16.dp),
+                        horizontalArrangement = Arrangement.End,
+                        content = footer
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 单行选择器：左侧小字说明 + 右侧当前值 + 下拉箭头，点击弹出选项 */
+@Composable
+fun SelectorField(label: String, value: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.width(6.dp))
+        Icon(Icons.Filled.ExpandMore, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+    }
+}
+
+/** 选项弹窗（配 SelectorField 用）：单选列表，选中项打勾，带副标题说明 */
+data class OptionItem(val key: String, val label: String, val sub: String? = null)
+
+@Composable
+fun OptionPickerDialog(
+    title: String,
+    options: List<OptionItem>,
+    selectedKey: String?,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(shape = RoundedCornerShape(24.dp)) {
+            Column(Modifier.padding(vertical = 8.dp)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                )
+                options.forEach { op ->
+                    val selected = op.key == selectedKey
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable { onPick(op.key) }
+                            .padding(horizontal = 20.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                op.label,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                            if (op.sub != null) Text(
+                                op.sub,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (selected) Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+    }
 }
 
 /** 读取一次数据并在 DataBus.rev 变化时重新计算 */

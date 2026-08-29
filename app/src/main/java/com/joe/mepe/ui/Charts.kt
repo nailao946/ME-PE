@@ -3,6 +3,8 @@ package com.joe.mepe.ui
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +29,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -199,7 +202,7 @@ fun BarChart(
 
 data class PieSlice(val label: String, val value: Double, val color: Color)
 
-/** 环形图（时间分布等），支持中心内容槽 */
+/** 环形图（时间分布等），支持中心内容槽；点扇区或图例行回调对应切片 */
 @Composable
 fun DonutChart(
     slices: List<PieSlice>,
@@ -211,7 +214,26 @@ fun DonutChart(
     val total = slices.sumOf { it.value }.takeIf { it > 0 } ?: 1.0
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
-            Canvas(Modifier.size(170.dp).padding(10.dp)) {
+            Canvas(Modifier.size(170.dp).padding(10.dp).pointerInput(slices) {
+                detectTapGestures { pos ->
+                    if (slices.isEmpty()) return@detectTapGestures
+                    val totalV = slices.sumOf { it.value }.takeIf { it > 0 } ?: return@detectTapGestures
+                    val dx = pos.x - size.width / 2f
+                    val dy = pos.y - size.height / 2f
+                    if (kotlin.math.sqrt(dx * dx + dy * dy) > kotlin.math.min(size.width, size.height) / 2f) return@detectTapGestures
+                    // 与绘制一致：-90°（顶部）起顺时针依次排布各扇区
+                    val ang = (Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())) + 450.0) % 360.0
+                    var acc = 0.0
+                    slices.forEach { s ->
+                        val sweep = s.value / totalV * 360.0
+                        if (ang >= acc && ang < acc + sweep) {
+                            onSliceClick(s)
+                            return@detectTapGestures
+                        }
+                        acc += sweep
+                    }
+                }
+            }) {
                 val strokeW = 30.dp.toPx()
                 var start = -90f
                 val gapDeg = if (slices.size > 1) 2.5f else 0f
@@ -236,7 +258,7 @@ fun DonutChart(
         slices.sortedByDescending { it.value }.take(8).forEach { s ->
             val pct = (s.value / total * 100)
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp),
+                Modifier.fillMaxWidth().clickable { onSliceClick(s) }.padding(horizontal = 8.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Canvas(Modifier.size(10.dp)) { drawCircle(s.color) }

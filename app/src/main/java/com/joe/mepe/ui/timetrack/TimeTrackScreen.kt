@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,6 +33,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
@@ -48,6 +50,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -87,6 +90,7 @@ import com.joe.mepe.ui.ColorDot
 import com.joe.mepe.ui.ColorPickerDialog
 import com.joe.mepe.ui.DonutChart
 import com.joe.mepe.ui.EmptyHint
+import com.joe.mepe.ui.FormDialog
 import com.joe.mepe.ui.LabeledField
 import com.joe.mepe.ui.PieSlice
 import com.joe.mepe.ui.QuickLinks
@@ -738,7 +742,11 @@ private fun TimeTagManagerDialog(onClose: () -> Unit) {
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = { adding = true }) { Text("＋ 新标签") }
+                    TextButton(onClick = { adding = true }) {
+                    Icon(Icons.Filled.Add, null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("新标签")
+                }
                     TextButton(onClick = onClose) { Text("完成") }
                 }
             }
@@ -787,39 +795,31 @@ private fun TimeTagEditDialog(initial: TimeTag?, onClose: () -> Unit) {
     var notes by remember { mutableStateOf(initial?.notes ?: "") }
     var picking by remember { mutableStateOf(false) }
 
-    Dialog(onDismissRequest = onClose) {
-        Card(shape = MaterialTheme.shapes.large) {
-            Column(Modifier.padding(16.dp)) {
-                Text(if (initial == null) "新时间标签" else "编辑标签", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(10.dp))
-                LabeledField("标签名称", name, { name = it })
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier.size(36.dp)
-                            .background(parseHexColor(colorHex, MaterialTheme.colorScheme.primary), CircleShape)
-                            .clickable { picking = true }
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Text("点击色块选择颜色（可自定义）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Spacer(Modifier.height(8.dp))
-                LabeledField("备注（可选）", notes, { notes = it })
-                Spacer(Modifier.height(14.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onClose) { Text("取消") }
-                    Button(
-                        onClick = {
-                            if (name.isBlank()) return@Button
-                            if (initial == null) Repos.addTimeTag(TimeTag(name = name.trim(), color = colorHex, notes = notes.ifBlank { null }))
-                            else Repos.updateTimeTag(initial.apply { this.name = name.trim(); this.color = colorHex; this.notes = notes.ifBlank { null } })
-                            onClose()
-                        },
-                        enabled = name.isNotBlank()
-                    ) { Text("保存") }
-                }
-            }
+    FormDialog(title = if (initial == null) "新时间标签" else "编辑标签", onClose = onClose) {
+        LabeledField("标签名称", name, { name = it })
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(36.dp)
+                    .background(parseHexColor(colorHex, MaterialTheme.colorScheme.primary), CircleShape)
+                    .clickable { picking = true }
+            )
+            Spacer(Modifier.width(10.dp))
+            Text("点击色块选择颜色（可自定义）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        Spacer(Modifier.height(8.dp))
+        LabeledField("备注（可选）", notes, { notes = it })
+        Spacer(Modifier.height(16.dp))
+        Button(
+            modifier = Modifier.fillMaxWidth().height(46.dp),
+            onClick = {
+                if (name.isBlank()) return@Button
+                if (initial == null) Repos.addTimeTag(TimeTag(name = name.trim(), color = colorHex, notes = notes.ifBlank { null }))
+                else Repos.updateTimeTag(initial.apply { this.name = name.trim(); this.color = colorHex; this.notes = notes.ifBlank { null } })
+                onClose()
+            },
+            enabled = name.isNotBlank()
+        ) { Text("保存") }
     }
     if (picking) {
         ColorPickerDialog(
@@ -937,6 +937,7 @@ private fun TagBindRow(label: String, tagId: Int?, tags: List<TimeTag>, onClick:
 private fun TimeStatsSheet(onClose: () -> Unit) {
     val rev = DataBus.rev
     var span by remember { mutableStateOf(0) }
+    var detailTag by remember { mutableStateOf<TimeTag?>(null) }
     val tags = remember(rev) { Repos.timeTags() }
     val records = remember(rev) { Repos.timeRecords() }
     val today = LocalDate.now()
@@ -997,16 +998,18 @@ private fun TimeStatsSheet(onClose: () -> Unit) {
             ))
             Spacer(Modifier.height(4.dp))
 
-            SectionCard(title = "时间分布（扇形图）") {
+            SectionCard(title = "时间分布（扇形图 · 点击看明细）") {
                 if (perTag.isEmpty()) EmptyHint("此范围没有计时记录")
-                else DonutChart(slices = slices, centerText = fmtMinutes(total))
+                else DonutChart(slices = slices, centerText = fmtMinutes(total)) { slice ->
+                    detailTag = tags.find { it.name == slice.label }
+                }
             }
 
-            SectionCard(title = "各标签时长") {
+            SectionCard(title = "各标签时长（点击看明细）") {
                 if (perTag.isEmpty()) EmptyHint("此范围没有计时记录")
                 else perTag.forEach { (t, min, c) ->
                     Row(
-                        Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                        Modifier.fillMaxWidth().clickable { detailTag = t }.padding(vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         ColorDot(c, sizeDp = 10)
@@ -1032,8 +1035,8 @@ private fun TimeStatsSheet(onClose: () -> Unit) {
                 }
             }
 
-            SectionCard(title = "今日时间轴（甘特图）") {
-                DayGanttChart(todayRecords, tags)
+            SectionCard(title = "今日时间轴（甘特图 · 点行看明细）") {
+                DayGanttChart(todayRecords, tags) { detailTag = it }
             }
 
             if (daily.any { it > 0 }) {
@@ -1045,11 +1048,20 @@ private fun TimeStatsSheet(onClose: () -> Unit) {
             Spacer(Modifier.height(28.dp))
         }
     }
+
+    // 点扇形图/图例/标签行/甘特行 → 该标签在所选范围内的记录明细
+    detailTag?.let { t ->
+        TagRecordsDetailDialog(
+            tag = t,
+            records = inRange.filter { it.tagId == t.id }.sortedBy { it.startTime },
+            onClose = { detailTag = null }
+        )
+    }
 }
 
-/** 当日 24 小时甘特时间轴：每标签一行，色块为该标签的计时区间，竖线每 3 小时一条 */
+/** 当日 24 小时甘特时间轴：每标签一行，色块为该标签的计时区间，竖线每 3 小时一条；点行查看该标签记录明细 */
 @Composable
-private fun DayGanttChart(records: List<TimeRecord>, tags: List<TimeTag>) {
+private fun DayGanttChart(records: List<TimeRecord>, tags: List<TimeTag>, onSelectTag: (TimeTag) -> Unit = {}) {
     val groups = tags.map { t -> t to records.filter { it.tagId == t.id }.sortedBy { it.startTime } }
         .filter { it.second.isNotEmpty() }
     if (groups.isEmpty()) {
@@ -1078,7 +1090,7 @@ private fun DayGanttChart(records: List<TimeRecord>, tags: List<TimeTag>) {
         groups.forEach { (tag, recs) ->
             val color = parseHexColor(tag.color, MaterialTheme.colorScheme.primary)
             Row(
-                Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                Modifier.fillMaxWidth().clickable { onSelectTag(tag) }.padding(vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -1119,5 +1131,69 @@ private fun DayGanttChart(records: List<TimeRecord>, tags: List<TimeTag>) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+/** 标签记录明细浮窗：扇形图/甘特图点按后查看该标签在所选范围内的每条计时记录（类似 PC 端点甘特图） */
+@Composable
+private fun TagRecordsDetailDialog(tag: TimeTag, records: List<TimeRecord>, onClose: () -> Unit) {
+    val color = parseHexColor(tag.color, MaterialTheme.colorScheme.primary)
+    val total = records.sumOf { it.minutes() }
+
+    Dialog(onDismissRequest = onClose) {
+        Card(shape = RoundedCornerShape(24.dp)) {
+            Column(Modifier.padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ColorDot(color, sizeDp = 12)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        tag.name, Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        fmtMinutes(total), style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold, color = color
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                if (records.isEmpty()) {
+                    EmptyHint("所选范围内没有该标签的记录")
+                } else {
+                    Column(
+                        Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())
+                    ) {
+                        records.forEach { r ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        "${r.date.drop(5).replace("-", "/")}  ${r.startTime.toLocalTime().toString().take(5)} – " +
+                                            (r.endTime?.toLocalTime()?.toString()?.take(5) ?: "进行中"),
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    r.note?.takeIf { it.isNotBlank() }?.let { note ->
+                                        Text(
+                                            note,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                                Text(
+                                    fmtMinutes(r.minutes()),
+                                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("关闭") }
+            }
+        }
     }
 }
