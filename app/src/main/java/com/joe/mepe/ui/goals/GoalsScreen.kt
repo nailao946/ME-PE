@@ -382,9 +382,11 @@ private fun GoalNode(
     val children = goals.filter { it.parentId == goal.id && !it.isDeleted }
     val subTasks = tasks.filter { it.goalId == goal.id && it.parentTaskId == null && !it.isDeleted }
     val progress = TaskLogic.goalProgress(goal, tasks, today)
-    val color = goalDisplayColor(goal, MaterialTheme.colorScheme.primary)
+    val goalColor = goalDisplayColor(goal, MaterialTheme.colorScheme.primary)
     val tag = goal.tagId?.let { tid -> tags.find { it.id == tid } }
     val boundTimeTag = goal.timeTagId?.let { id -> timeTags.find { it.id == id } }
+    // 绑定了时间标签 → 目标卡颜色（进度环/圆点/小字/进度条）跟随标签色
+    val color = boundTimeTag?.let { parseHexColor(it.color, MaterialTheme.colorScheme.primary) } ?: goalColor
     val expanded = goal.id !in expandedIds // 默认展开，点按折叠
 
     Column(Modifier.padding(horizontal = if (depth == 0) 12.dp else 0.dp, vertical = 4.dp)) {
@@ -426,7 +428,11 @@ private fun GoalNode(
                                 append("量化 ${(goal.quantitativeCurrent ?: 0.0)}/${goal.quantitativeTarget}${goal.quantitativeUnit?.let { " $it" } ?: ""}")
                             else if (tag != null) append("标签 ${tag.name}")
                         }
-                        if (meta.isNotBlank()) Text(meta.removeSuffix(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (meta.isNotBlank()) Text(
+                            meta.removeSuffix(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = color
+                        )
                     }
                     if (children.isNotEmpty()) {
                         Icon(
@@ -448,7 +454,7 @@ private fun GoalNode(
         // 子目标以任务行的形式展示：可勾选完成、点击弹出量化/进度窗口
         if (children.isNotEmpty() && expanded) {
             children.forEach { child ->
-                SubGoalRow(child, goals, tags, tasks, today, depth + 1, expandedIds, onToggleExpand, onEdit, onDelete, onAddSub, onQuant)
+                SubGoalRow(child, goals, tags, tasks, timeTags, today, depth + 1, expandedIds, onToggleExpand, onEdit, onDelete, onAddSub, onQuant)
             }
         }
     }
@@ -461,6 +467,7 @@ private fun SubGoalRow(
     goals: List<Goal>,
     tags: List<GoalTag>,
     tasks: List<com.joe.mepe.data.TaskItem>,
+    timeTags: List<com.joe.mepe.data.TimeTag>,
     today: LocalDate,
     depth: Int,
     expandedIds: Set<Int>,
@@ -470,7 +477,10 @@ private fun SubGoalRow(
     onAddSub: (Int) -> Unit,
     onQuant: (Goal) -> Unit,
 ) {
-    val color = goalDisplayColor(goal, MaterialTheme.colorScheme.primary)
+    // 绑定了时间标签 → 行颜色（勾选圈/小字/进度条）跟随标签色
+    val color = goal.timeTagId?.let { id -> timeTags.find { it.id == id } }
+        ?.let { parseHexColor(it.color, MaterialTheme.colorScheme.primary) }
+        ?: goalDisplayColor(goal, MaterialTheme.colorScheme.primary)
     val progress = TaskLogic.goalProgress(goal, tasks, today)
     val done = progress >= 0.999
     val children = goals.filter { it.parentId == goal.id && !it.isDeleted }
@@ -519,7 +529,7 @@ private fun SubGoalRow(
                     else append("进度 ${(progress * 100).toInt()}%")
                     if (children.isNotEmpty()) append(" · 子目标 ${children.size}")
                 }
-                Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(meta, style = MaterialTheme.typography.labelSmall, color = color)
                 Spacer(Modifier.height(4.dp))
                 // 进度条（量化=数值进度，普通=百分比进度）
                 com.joe.mepe.ui.RoundedProgressBar(
@@ -537,7 +547,7 @@ private fun SubGoalRow(
         }
         if (children.isNotEmpty() && goal.id !in expandedIds) {
             children.forEach { c ->
-                SubGoalRow(c, goals, tags, tasks, today, depth + 1, expandedIds, onToggleExpand, onEdit, onDelete, onAddSub, onQuant)
+                SubGoalRow(c, goals, tags, tasks, timeTags, today, depth + 1, expandedIds, onToggleExpand, onEdit, onDelete, onAddSub, onQuant)
             }
         }
     }

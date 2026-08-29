@@ -513,14 +513,12 @@ private fun TaskCard(
     val done = TaskLogic.isDoneOn(task, date, completions)
     val goal = task.goalId?.let { gid -> goals.find { it.id == gid } }
     val tagColor = goal?.tagId?.let { tid -> tags.find { t -> t.id == tid }?.color }
-    // 关联的时间标签：卡片颜色风格跟随标签
+    // 关联的时间标签：卡片颜色风格（边框/色条/小字/进度条/完成圈）全部跟随标签
     val timeTag = task.timeTagId?.let { id -> timeTags.find { it.id == id } }
     val accent = timeTag?.let { parseHexColor(it.color, MaterialTheme.colorScheme.primary) }
+    val doneColor = accent ?: MaterialTheme.colorScheme.primary
     val progress = if (task.type == TaskTypes.QUANTITATIVE && task.quantitativeTarget != null && task.quantitativeTarget!! > 0)
         ((task.quantitativeCurrent ?: 0.0) / task.quantitativeTarget!!).coerceIn(0.0, 1.0) else null
-    val checkColor by animateColorAsState(
-        if (done) MaterialTheme.colorScheme.primary else Color.Transparent, label = "check"
-    )
 
     Card(
         Modifier.fillMaxWidth().clickable { onOpen(task) },
@@ -546,14 +544,11 @@ private fun TaskCard(
                 Modifier.size(26.dp)
                     .border(
                         2.dp,
-                        when {
-                            done -> MaterialTheme.colorScheme.primary
-                            accent != null -> accent.copy(alpha = 0.8f)
-                            else -> MaterialTheme.colorScheme.outline
-                        },
+                        if (done) doneColor
+                        else accent?.copy(alpha = 0.8f) ?: MaterialTheme.colorScheme.outline,
                         CircleShape
                     )
-                    .background(checkColor, CircleShape)
+                    .background(if (done) doneColor else Color.Transparent, CircleShape)
                     .clickable {
                         if (task.type == TaskTypes.QUANTITATIVE) {
                             TaskLogic.adjustQuantitative(task, TaskLogic.quantStep(task))
@@ -564,7 +559,7 @@ private fun TaskCard(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                if (done) Icon(Icons.Filled.Check, "完成", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(16.dp))
+                if (done) Icon(Icons.Filled.Check, "完成", tint = Color.White, modifier = Modifier.size(16.dp))
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
@@ -587,13 +582,16 @@ private fun TaskCard(
                     if (need > 0) append(" · ${completions.count { it.taskId == task.id && it.date == date.toString() }}/$need")
                 }
                 if (meta.isNotBlank())
-                    Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        meta, style = MaterialTheme.typography.bodySmall,
+                        color = accent ?: MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 if (progress != null) {
                     com.joe.mepe.ui.RoundedProgressBar(
                         progress = progress.toFloat(),
                         modifier = Modifier.padding(top = 6.dp),
                         heightDp = 8,
-                        color = accent ?: MaterialTheme.colorScheme.primary
+                        color = doneColor
                     )
                 }
             }
@@ -639,6 +637,7 @@ private fun TaskDetailSheet(
     val tagColor = goal?.tagId?.let { tid -> tags.find { t -> t.id == tid }?.color }
     val timeTag = task.timeTagId?.let { id -> timeTags.find { it.id == id } }
     val accent = timeTag?.let { parseHexColor(it.color, MaterialTheme.colorScheme.primary) }
+    val doneColor = accent ?: MaterialTheme.colorScheme.primary
 
     ModalBottomSheet(onDismissRequest = onClose, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
@@ -648,14 +647,11 @@ private fun TaskDetailSheet(
                     Modifier.size(30.dp)
                         .border(
                             2.dp,
-                            when {
-                                done -> MaterialTheme.colorScheme.primary
-                                accent != null -> accent.copy(alpha = 0.8f)
-                                else -> MaterialTheme.colorScheme.outline
-                            },
+                            if (done) doneColor
+                            else accent?.copy(alpha = 0.8f) ?: MaterialTheme.colorScheme.outline,
                             CircleShape
                         )
-                        .background(if (done) MaterialTheme.colorScheme.primary else Color.Transparent, CircleShape)
+                        .background(if (done) doneColor else Color.Transparent, CircleShape)
                         .clickable {
                             if (task.type == TaskTypes.QUANTITATIVE) {
                                 TaskLogic.adjustQuantitative(task, TaskLogic.quantStep(task))
@@ -666,7 +662,7 @@ private fun TaskDetailSheet(
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (done) Icon(Icons.Filled.Check, "完成", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
+                    if (done) Icon(Icons.Filled.Check, "完成", tint = Color.White, modifier = Modifier.size(18.dp))
                 }
                 Spacer(Modifier.width(12.dp))
                 Text(
