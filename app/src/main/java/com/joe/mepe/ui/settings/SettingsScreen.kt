@@ -2,6 +2,7 @@ package com.joe.mepe.ui.settings
 
 import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -78,6 +79,9 @@ import java.io.File
 @Composable
 fun SettingsScreen(nav: (String) -> Unit) {
     var page by rememberSaveable { mutableStateOf("") }
+
+    // 系统返回逐级退出：在分类子页（关于/外观/云同步…）先退回设置首页，再由外层退回主界面
+    BackHandler(enabled = page.isNotBlank()) { page = "" }
 
     if (page.isBlank()) {
         Column(Modifier.fillMaxSize()) {

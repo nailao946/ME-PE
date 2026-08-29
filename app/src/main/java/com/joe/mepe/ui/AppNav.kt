@@ -106,6 +106,8 @@ fun QuickLinks(current: String, nav: (String) -> Unit) {
 fun AppRoot() {
     var route by rememberSaveable { mutableStateOf(Routes.TASKS) }
     var mainTab by rememberSaveable { mutableStateOf(Routes.TASKS) }
+    // 覆盖页返回栈：主 Tab → 设置 → 管理模块 这类多级进入时，系统返回逐级原路退回
+    var backStack by rememberSaveable { mutableStateOf(listOf<String>()) }
     // 方向感知转场：进入二级页=从右滑入，返回主 Tab=向下滑入，避免来回跳变
     var forward by rememberSaveable { mutableStateOf(true) }
 
@@ -114,11 +116,18 @@ fun AppRoot() {
     fun navigate(target: String) {
         if (target == Routes.BACK) {
             forward = false
-            route = mainTab
+            route = backStack.lastOrNull() ?: mainTab
+            backStack = backStack.dropLast(1)
             return
         }
+        if (target == route) return
         forward = !(target in Routes.mainTabs && route in overlays)
-        if (target in Routes.mainTabs) mainTab = target
+        if (target in Routes.mainTabs) {
+            mainTab = target
+            backStack = emptyList()
+        } else {
+            backStack = backStack + route
+        }
         route = target
     }
 
