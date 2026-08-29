@@ -203,8 +203,8 @@ fun TasksScreen(nav: (String) -> Unit) {
                     Column(
                         Modifier
                             .padding(start = 12.dp, end = 4.dp)
-                            .size(42.dp, 54.dp)
-                            .background(bg, RoundedCornerShape(12.dp))
+                            .size(54.dp)
+                            .background(bg, CircleShape)
                             .clickable { selectedDate = d },
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
