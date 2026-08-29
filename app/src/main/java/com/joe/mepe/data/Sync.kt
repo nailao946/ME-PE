@@ -87,6 +87,31 @@ object GitHubSync {
     private fun parseObj(text: String): JsonObject =
         JsonStore.json.parseToJsonElement(text) as JsonObject
 
+    /** 反馈提交目标仓库（项目 Issues，非用户的同步数据仓库） */
+    private const val FEEDBACK_REPO = "nailao946/ME-PE"
+
+    /**
+     * 提交用户反馈到项目仓库 Issues。任何 GitHub 账号都能在公开仓库提 issue，无需仓库写权限；
+     * 首行作为标题（过长截断），正文自动附上版本与平台信息便于定位问题。返回 issue 编号。
+     */
+    suspend fun submitFeedback(context: Context, content: String): Int = withContext(Dispatchers.IO) {
+        val conf = SyncConfig.load(context)
+        if (conf.pat.isBlank()) throw RuntimeException("尚未绑定 GitHub，请先在「设置 → 云同步」中登录后再提交反馈")
+        val text = content.trim()
+        if (text.isEmpty()) throw RuntimeException("请先填写反馈内容")
+
+        val firstLine = text.lineSequence().first().trim()
+        val title = if (firstLine.length > 40) firstLine.take(40) + "…" else firstLine
+        val body = text + "\n\n---\n来自 ME 安卓版 v${com.joe.mepe.BuildConfig.VERSION_NAME} · Android"
+        val payload = buildJsonObject {
+            put("title", title)
+            put("body", body)
+        }.toString()
+
+        val resp = httpCall(conf, "$API/repos/$FEEDBACK_REPO/issues", "POST", payload)
+        (parseObj(resp)["number"]?.toString()?.trim('"'))?.toIntOrNull() ?: 0
+    }
+
     /**
      * 确保同步仓库存在：默认 ME-Data（私有），用户只填仓库名时自动挂到当前账号下（已存在则直接用）。
      * 登录后与上传/下载前调用，用户无需手填 owner/ 前缀。配置里只保存仓库名。

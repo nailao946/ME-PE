@@ -1,6 +1,7 @@
 package com.joe.mepe.ui.settings
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -601,6 +602,8 @@ private fun ModulesPage(nav: (String) -> Unit, onBack: () -> Unit) {
 @Composable
 private fun AboutPage(onBack: () -> Unit) {
     val ctx = LocalContext.current
+    var showFeedback by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     fun openUrl(url: String) {
         try { ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) } catch (_: Exception) { }
@@ -620,6 +623,23 @@ private fun AboutPage(onBack: () -> Unit) {
                 Text(
                     "数据与桌面版（WPF）互通：桌面端备份 zip 可直接导入；GitHub 云同步可直接在两端互传。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            SectionCard(title = "提意见 / 反馈 Bug") {
+                Row(
+                    Modifier.fillMaxWidth().clickable { showFeedback = true },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("✍ 写下建议或问题", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "提交到 GitHub Issues",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "使用「云同步」已绑定的 GitHub 账号，反馈将作为 Issue 提交到项目仓库",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             SectionCard(title = "项目主页") {
@@ -650,6 +670,61 @@ private fun AboutPage(onBack: () -> Unit) {
                 )
             }
             Spacer(Modifier.height(24.dp))
+        }
+    }
+
+    if (showFeedback) {
+        var text by remember { mutableStateOf("") }
+        var submitting by remember { mutableStateOf(false) }
+        var error by remember { mutableStateOf<String?>(null) }
+        androidx.compose.ui.window.Dialog(onDismissRequest = { if (!submitting) showFeedback = false }) {
+            androidx.compose.material3.Card {
+                Column(Modifier.padding(16.dp)) {
+                    Text("提意见 / 反馈 Bug", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "将作为 Issue 提交到 github.com/nailao946/ME-PE（用「云同步」绑定的账号）；第一行会自动作为标题。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    androidx.compose.material3.OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        modifier = Modifier.fillMaxWidth().height(170.dp),
+                        placeholder = { Text("写下你的建议或遇到的问题…") },
+                        enabled = !submitting,
+                        maxLines = 10,
+                    )
+                    error?.let {
+                        Spacer(Modifier.height(6.dp))
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        androidx.compose.material3.TextButton(
+                            onClick = { showFeedback = false },
+                            enabled = !submitting
+                        ) { Text("取消") }
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                submitting = true; error = null
+                                scope.launch {
+                                    try {
+                                        val n = GitHubSync.submitFeedback(ctx, text)
+                                        showFeedback = false
+                                        Toast.makeText(ctx, "已提交 Issue #$n，感谢反馈！", Toast.LENGTH_LONG).show()
+                                    } catch (e: Exception) {
+                                        error = e.message ?: "提交失败，请检查网络后重试"
+                                    }
+                                    submitting = false
+                                }
+                            },
+                            enabled = !submitting && text.isNotBlank()
+                        ) { Text(if (submitting) "提交中…" else "提交") }
+                    }
+                }
+            }
         }
     }
 }
