@@ -329,18 +329,18 @@ fun TasksScreen(nav: (String) -> Unit) {
         }
     }
 
-    // 悬浮新建按钮
+    // 悬浮新建按钮（小圆 FAB，纯 + 号）
     Box(Modifier.fillMaxSize()) {
-        androidx.compose.material3.ExtendedFloatingActionButton(
+        androidx.compose.material3.FloatingActionButton(
             onClick = { creating = true },
             modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
             containerColor = MaterialTheme.colorScheme.primary,
             contentColor = MaterialTheme.colorScheme.onPrimary,
-            elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(defaultElevation = 4.dp)
+            elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(
+                defaultElevation = 6.dp, pressedElevation = 12.dp, hoveredElevation = 8.dp
+            )
         ) {
-            Icon(Icons.Filled.Add, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("新任务", fontWeight = FontWeight.SemiBold)
+            Icon(Icons.Filled.Add, "新任务", Modifier.size(26.dp))
         }
     }
 
