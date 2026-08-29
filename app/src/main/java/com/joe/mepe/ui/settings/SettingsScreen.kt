@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.joe.mepe.data.BackupManager
 import com.joe.mepe.data.DataBus
+import com.joe.mepe.data.GitHubLogin
 import com.joe.mepe.data.GitHubSync
 import com.joe.mepe.data.Repos
 import com.joe.mepe.data.SyncConfig
@@ -62,6 +63,7 @@ import com.joe.mepe.ui.theme.Accents
 import com.joe.mepe.ui.theme.IconColorChoices
 import com.joe.mepe.ui.theme.colorToHex
 import com.joe.mepe.ui.theme.parseHexColor
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -82,6 +84,9 @@ fun SettingsScreen(nav: (String) -> Unit) {
     var syncBranch by remember(syncConf.branch) { mutableStateOf(syncConf.branch) }
     var syncAuto by remember(syncConf.autoPush) { mutableStateOf(syncConf.autoPush) }
     var syncing by remember { mutableStateOf(false) }
+    var loginMsg by remember { mutableStateOf("") }
+    var loggingIn by remember { mutableStateOf(false) }
+    var loginCode by remember { mutableStateOf("") }
 
     var aiName by remember { mutableStateOf("") }
     var aiKey by remember { mutableStateOf("") }
@@ -219,7 +224,62 @@ fun SettingsScreen(nav: (String) -> Unit) {
             LabeledField("分支", syncBranch, { syncBranch = it }, placeholder = "main")
             Spacer(Modifier.height(6.dp))
             LabeledField("GitHub Token（PAT）", syncPat, { syncPat = it }, placeholder = "ghp_xxxx")
+            Spacer(Modifier.height(10.dp))
+            // 账号授权登录（GitHub Device Flow）：跳网页登录输代码点允许，自动拿 Token
+            Text(
+                if (syncConf.pat.isNotBlank())
+                    (if (syncConf.account.isNotBlank()) "已登录：${syncConf.account}" else "已登录 GitHub 账号")
+                else "未登录 GitHub 账号",
+                style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium
+            )
             Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = {
+                        loggingIn = true
+                        loginMsg = "正在请求授权码…"
+                        loginCode = ""
+                        scope.launch {
+                            try {
+                                val s = GitHubLogin.start()
+                                loginCode = s.userCode
+                                loginMsg = "浏览器即将打开，登录 GitHub 后输入代码 ${s.userCode}，点 Authorize 授权，然后等在这里…"
+                                try {
+                                    ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(s.verifyUrl)))
+                                } catch (_: Exception) { }
+                                var result: String? = null
+                                while (isActive) {
+                                    kotlinx.coroutines.delay(s.interval * 1000L)
+                                    result = GitHubLogin.poll(s)
+                                    if (result != null) break
+                                    if (System.currentTimeMillis() > s.expiresAt) { result = "!授权超时，请重试"; break }
+                                }
+                                val r = result ?: "!授权超时"
+                                if (r.startsWith("!")) {
+                                    loginMsg = r
+                                } else {
+                                    val fresh = SyncConfig.load(ctx)
+                                    fresh.pat = r
+                                    fresh.account = GitHubLogin.fetchAccountName(r)
+                                    SyncConfig.save(ctx, fresh)
+                                    syncPat = r
+                                    loginMsg = "✓ 授权成功，Token 已自动保存"
+                                }
+                            } catch (e: Exception) {
+                                loginMsg = "✗ ${e.message}"
+                            }
+                            loggingIn = false
+                        }
+                    },
+                    enabled = !loggingIn,
+                    shape = MaterialTheme.shapes.small
+                ) { Text(if (loggingIn) "等待授权…" else "账号授权登录") }
+            }
+            if (loginMsg.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(loginMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(8.dp))
             ToggleRow("自动上传", syncAuto, { syncAuto = it }, sub = "每次修改数据后自动推送到仓库")
             Spacer(Modifier.height(6.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -227,7 +287,11 @@ fun SettingsScreen(nav: (String) -> Unit) {
                     onClick = {
                         syncing = true
                         scope.launch {
-                            SyncConfig.save(ctx, SyncConfig.Conf(syncPat.trim(), syncRepo.trim(), syncBranch.trim().ifBlank { "main" }, syncAuto, syncConf.lastPushAt, syncConf.lastPullAt))
+                            val c = SyncConfig.load(ctx).also {
+                                it.pat = syncPat.trim(); it.repo = syncRepo.trim()
+                                it.branch = syncBranch.trim().ifBlank { "main" }; it.autoPush = syncAuto
+                            }
+                            SyncConfig.save(ctx, c)
                             msg = GitHubSync.push(ctx)
                             syncing = false
                         }
@@ -239,7 +303,11 @@ fun SettingsScreen(nav: (String) -> Unit) {
                     onClick = {
                         syncing = true
                         scope.launch {
-                            SyncConfig.save(ctx, SyncConfig.Conf(syncPat.trim(), syncRepo.trim(), syncBranch.trim().ifBlank { "main" }, syncAuto, syncConf.lastPushAt, syncConf.lastPullAt))
+                            val c = SyncConfig.load(ctx).also {
+                                it.pat = syncPat.trim(); it.repo = syncRepo.trim()
+                                it.branch = syncBranch.trim().ifBlank { "main" }; it.autoPush = syncAuto
+                            }
+                            SyncConfig.save(ctx, c)
                             msg = GitHubSync.pull(ctx)
                             syncing = false
                         }

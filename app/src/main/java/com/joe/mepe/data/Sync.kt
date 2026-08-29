@@ -9,6 +9,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -30,6 +31,7 @@ object SyncConfig {
         var autoPush: Boolean = false,
         var lastPushAt: String = "",
         var lastPullAt: String = "",
+        var account: String = "",   // 授权登录后显示的 GitHub 用户名
     )
 
     private const val FILE = "sync_config.json"
@@ -156,5 +158,90 @@ object GitHubSync {
         }
         if (n == items.size) "✓ 已下载 $n 个文件（原数据已备份）"
         else "已下载 $n/${items.size} 个" + (lastErr?.let { "，错误：$it" } ?: "")
+    }
+}
+
+/**
+ * GitHub 设备码授权登录（与 PC 端同一 OAuth App）：
+ * 应用显示一个 8 位代码 → 打开浏览器 github.com/login/device → 登录输入代码点 Authorize → 自动拿到 Token。
+ */
+object GitHubLogin {
+    private const val CLIENT_ID = "Ov23liBQpCTtMnMWyzsa"
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    data class Session(
+        val deviceCode: String,
+        val userCode: String,
+        val verifyUrl: String,
+        var interval: Int = 5,
+        val expiresAt: Long = System.currentTimeMillis() + 15 * 60 * 1000,
+    )
+
+    private fun postForm(url: String, body: FormBody): Request =
+        Request.Builder().url(url)
+            .header("Accept", "application/json")
+            .header("User-Agent", "ME-PE")
+            .post(body).build()
+
+    private fun parseObj(text: String): JsonObject =
+        JsonStore.json.parseToJsonElement(text) as JsonObject
+
+    /** 第一步：请求 device code */
+    suspend fun start(): Session = withContext(Dispatchers.IO) {
+        val form = FormBody.Builder()
+            .add("client_id", CLIENT_ID)
+            .add("scope", "repo")
+            .build()
+        http.newCall(postForm("https://github.com/login/device/code", form)).execute().use { r ->
+            val text = r.body?.string() ?: ""
+            if (!r.isSuccessful) throw RuntimeException("HTTP ${r.code}：${text.take(200)}")
+            val o = parseObj(text)
+            Session(
+                deviceCode = o["device_code"]?.toString()?.trim('"') ?: "",
+                userCode = o["user_code"]?.toString()?.trim('"') ?: "",
+                verifyUrl = o["verification_uri"]?.toString()?.trim('"') ?: "https://github.com/login/device",
+                interval = o["interval"]?.toString()?.trim('"')?.toIntOrNull() ?: 5,
+                expiresAt = System.currentTimeMillis() + (o["expires_in"]?.toString()?.trim('"')?.toLongOrNull() ?: 900L) * 1000,
+            )
+        }
+    }
+
+    /** 第二步：轮询一次。返回 null=仍在等待；"!xxx"=错误；其他=token */
+    suspend fun poll(s: Session): String? = withContext(Dispatchers.IO) {
+        val form = FormBody.Builder()
+            .add("client_id", CLIENT_ID)
+            .add("device_code", s.deviceCode)
+            .add("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+            .build()
+        http.newCall(postForm("https://github.com/login/oauth/access_token", form)).execute().use { r ->
+            val o = parseObj(r.body?.string() ?: "{}")
+            val err = o["error"]?.toString()?.trim('"')
+            if (err != null) {
+                return@withContext when (err) {
+                    "authorization_pending" -> null
+                    "slow_down" -> { s.interval += 5; null }
+                    "expired_token" -> "!授权码已过期，请重新开始"
+                    else -> "!授权失败：$err"
+                }
+            }
+            o["access_token"]?.toString()?.trim('"')
+        }
+    }
+
+    /** 用 token 拉取 GitHub 用户名（失败返回空串） */
+    suspend fun fetchAccountName(token: String): String = withContext(Dispatchers.IO) {
+        try {
+            val req = Request.Builder().url("https://api.github.com/user")
+                .header("Authorization", "Bearer $token")
+                .header("User-Agent", "ME-PE")
+                .build()
+            http.newCall(req).execute().use { r ->
+                val o = parseObj(r.body?.string() ?: "{}")
+                o["login"]?.toString()?.trim('"') ?: ""
+            }
+        } catch (_: Exception) { "" }
     }
 }
