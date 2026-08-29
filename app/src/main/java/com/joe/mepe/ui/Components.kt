@@ -800,10 +800,9 @@ private fun Modifier.androidx_hueBar(): Modifier =
     }
 
 /**
- * 左滑露出「编辑 / 删除」纯图标圆钮；滑过一半吸附打开，否则弹回。
- * 动作区底色 = 内容卡片的容器色（panelColor 可传），配合左侧凹角，整块与任务条完全融为一体；
- * 圆钮大小随行高自适应（子任务/子目标行更矮 → 圆钮更小），图标随圆钮缩放。
- * 动作随滑动进度淡入放大（关闭时完全隐藏）。locked=true 时冻结左滑并弹回（如拖动排序中）。
+ * 左滑露出「编辑 / 删除」两个紧凑图标按钮：无背景面板、不与卡片粘边，仅两个着色图标
+ * （编辑=主色、删除=红），整体 88dp、每个按钮约 44dp 触控区，紧凑不占地方；
+ * 滑过一半吸附打开，否则弹回；动作随滑动进度淡入。locked=true 时冻结左滑并弹回（如拖动排序中）。
  */
 @Composable
 fun SwipeReveal(
@@ -811,12 +810,9 @@ fun SwipeReveal(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
     locked: Boolean = false,
-    cornerDp: Int = 14,
-    panelColor: Color = MaterialTheme.colorScheme.surface,
     content: @Composable () -> Unit,
 ) {
-    val maxSwipePx = with(androidx.compose.ui.platform.LocalDensity.current) { 144.dp.toPx() }
-    val cornerPx = with(androidx.compose.ui.platform.LocalDensity.current) { cornerDp.dp.toPx() }
+    val maxSwipePx = with(androidx.compose.ui.platform.LocalDensity.current) { 88.dp.toPx() }
     val offsetX = remember { androidx.compose.animation.core.Animatable(0f) }
     val scope = rememberCoroutineScope()
     val currentLocked by androidx.compose.runtime.rememberUpdatedState(locked)
@@ -827,24 +823,21 @@ fun SwipeReveal(
     }
 
     Box(modifier.fillMaxWidth()) {
-        // 动作层：与卡片同色的整体面板 + 左凹角右圆角，视觉上就是任务条的一部分
-        val actionShape = remember(cornerPx) { SwipeActionsShape(cornerPx) }
+        // 动作层：无背景，右侧两个紧凑着色图标按钮（随滑出进度淡入）
         val primaryC = MaterialTheme.colorScheme.primary
         val errorC = MaterialTheme.colorScheme.error
         val revealT = { ((-offsetX.value) / maxSwipePx).coerceIn(0f, 1f) }
         Row(
             Modifier
                 .align(Alignment.CenterEnd)
-                .width(144.dp)
+                .width(88.dp)
                 .fillMaxHeight()
                 .androidx_graphicsAlpha { ((-offsetX.value) / (maxSwipePx / 4f)).coerceIn(0f, 1f) }
-                .clip(actionShape)
-                .background(panelColor)
         ) {
             SwipeActionPanel(
                 icon = Icons.Filled.Edit,
                 desc = "编辑",
-                circle = primaryC,
+                tint = primaryC,
                 progress = revealT,
                 modifier = Modifier.weight(1f),
                 onClick = {
@@ -855,7 +848,7 @@ fun SwipeReveal(
             SwipeActionPanel(
                 icon = Icons.Filled.Delete,
                 desc = "删除",
-                circle = errorC,
+                tint = errorC,
                 progress = { (revealT() - 0.12f).coerceAtLeast(0f) / 0.88f },
                 modifier = Modifier.weight(1f),
                 onClick = {
@@ -898,90 +891,35 @@ private fun Modifier.androidx_graphicsAlpha(alpha: () -> Float): Modifier =
         Modifier.graphicsLayer { this.alpha = alpha() }
     )
 
-/** 读取面板高度（px），用于圆钮尺寸自适应行高 */
-private fun Modifier.androidx_onHeightChanged(onH: (Float) -> Unit): Modifier =
-    this.then(
-        Modifier.onSizeChanged { onH(it.height.toFloat()) }
-    )
-
 /**
- * 左滑动作面板（设计系统组件）：纯图标实色圆钮，直径随面板（行）高度自适应——
- * 行越高圆钮越大（34~56dp 之间），子任务/子目标等矮行自动变小；随滑出进度淡入+弹出。
+ * 左滑动作按钮（设计系统组件）：紧凑图标按钮——无底色、无圆形背景，仅着色图标
+ * （编辑=主色、删除=红），占动作区一半宽（约 44dp 触控区），随滑出进度淡入+轻微放大。
  */
 @Composable
 private fun SwipeActionPanel(
     icon: ImageVector,
     desc: String,
-    circle: Color,
+    tint: Color,
     progress: () -> Float,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val minPx = with(density) { 34.dp.toPx() }
-    val maxPx = with(density) { 56.dp.toPx() }
-    val padPx = with(density) { 15.dp.toPx() }
-    var panelH by remember { mutableStateOf(0f) }
-    val diameterPx = if (panelH > 0f) (panelH - padPx * 2).coerceIn(minPx, maxPx) else maxPx
-
     Box(
         modifier
             .fillMaxHeight()
-            .androidx_onHeightChanged { panelH = it }
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Box(
-            Modifier
+        Icon(
+            icon, desc, tint = tint,
+            modifier = Modifier
                 .graphicsLayer {
-                    val dPx = diameterPx
                     val t = progress()
                     alpha = t
-                    val s = 0.7f + 0.3f * t
+                    val s = 0.8f + 0.2f * t
                     scaleX = s; scaleY = s
                 }
-                .size(with(density) { diameterPx.toDp() })
-                .background(circle, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                icon, desc, tint = Color.White,
-                modifier = Modifier.size(with(density) { (diameterPx * 0.46f).toDp() })
-            )
-        }
-    }
-}
-
-/**
- * 左滑动作区形状：左侧上下两个凹角（内圆角，半径 r），右侧两个圆角（同 r）。
- * 用于与内容卡片的圆角无缝衔接。
- */
-private class SwipeActionsShape(private val cornerPx: Float) : androidx.compose.ui.graphics.Shape {
-    override fun createOutline(
-        size: androidx.compose.ui.geometry.Size,
-        layoutDirection: androidx.compose.ui.unit.LayoutDirection,
-        density: androidx.compose.ui.unit.Density,
-    ): androidx.compose.ui.graphics.Outline {
-        val w = size.width
-        val h = size.height
-        val r = cornerPx.coerceAtMost(w / 2f).coerceAtMost(h / 2f)
-        val path = androidx.compose.ui.graphics.Path()
-        // 顶边
-        path.moveTo(r, 0f)
-        path.lineTo(w - r, 0f)
-        path.arcTo(androidx.compose.ui.geometry.Rect(w - 2 * r, 0f, w, 2 * r), -90f, 90f, false)
-        // 右边
-        path.lineTo(w, h - r)
-        path.arcTo(androidx.compose.ui.geometry.Rect(w - 2 * r, h - 2 * r, w, h), 0f, 90f, false)
-        // 底边（到左下凹角）
-        path.lineTo(r, h)
-        // 左下凹角：圆心 (0, h-r)，从 (r, h) 逆时针转到 (0, h-r)
-        path.arcTo(androidx.compose.ui.geometry.Rect(-r, h - 2 * r, r, h), 0f, -90f, false)
-        // 左边（向上到左上凹角）
-        path.lineTo(0f, r)
-        // 左上凹角：圆心 (0,0)，从 (0, r) 逆时针转到 (r, 0)
-        path.arcTo(androidx.compose.ui.geometry.Rect(-r, -r, r, r), 90f, -90f, false)
-        path.close()
-        return androidx.compose.ui.graphics.Outline.Generic(path)
+                .size(22.dp)
+        )
     }
 }

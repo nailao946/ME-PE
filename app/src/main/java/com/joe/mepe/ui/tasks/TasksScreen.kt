@@ -474,7 +474,6 @@ private fun TaskRowItem(
         SwipeReveal(
             onEdit = { onEdit(task) }, onDelete = { onDelete(task) },
             locked = draggingKey != null,
-            panelColor = if (done) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
         ) {
             DraggableCard(
                 itemKey = itemKey,
