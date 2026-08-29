@@ -80,8 +80,8 @@ fun SettingsScreen(nav: (String) -> Unit) {
 
     val syncConf = remember(rev) { SyncConfig.load(ctx) }
     var syncPat by remember(syncConf.pat) { mutableStateOf(syncConf.pat) }
-    var syncRepo by remember(syncConf.repo) { mutableStateOf(syncConf.repo) }
-    var syncBranch by remember(syncConf.branch) { mutableStateOf(syncConf.branch) }
+    var syncRepo by remember(syncConf.repo) { mutableStateOf(syncConf.repo.ifBlank { "ME-OKR" }) }
+    var syncBranch by remember(syncConf.branch) { mutableStateOf(syncConf.branch.ifBlank { "main" }) }
     var syncAuto by remember(syncConf.autoPush) { mutableStateOf(syncConf.autoPush) }
     var syncing by remember { mutableStateOf(false) }
     var loginMsg by remember { mutableStateOf("") }
@@ -219,7 +219,12 @@ fun SettingsScreen(nav: (String) -> Unit) {
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(8.dp))
-            LabeledField("仓库（owner/name）", syncRepo, { syncRepo = it }, placeholder = "如：nailao946/ME-Data")
+            LabeledField("仓库名", syncRepo, { syncRepo = it }, placeholder = "ME-OKR")
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "只填仓库名即可：自动创建私有仓库并挂到你的账号下，无需填 owner/",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.height(6.dp))
             LabeledField("分支", syncBranch, { syncBranch = it }, placeholder = "main")
             Spacer(Modifier.height(6.dp))

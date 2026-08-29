@@ -80,8 +80,8 @@ object GitHubSync {
         JsonStore.json.parseToJsonElement(text) as JsonObject
 
     /**
-     * 确保默认同步仓库存在：在用户账号下创建私有仓库 ME-OKR 并写入配置（已存在则直接用）。
-     * 登录后与上传/下载前（仓库为空时）调用，用户无需手填仓库名。
+     * 确保同步仓库存在：默认 ME-OKR（私有），用户只填仓库名时自动挂到当前账号下（已存在则直接用）。
+     * 登录后与上传/下载前调用，用户无需手填 owner/ 前缀。配置里只保存仓库名。
      */
     suspend fun ensureRepo(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
@@ -90,12 +90,15 @@ object GitHubSync {
         var login = conf.account
         if (login.isBlank()) {
             login = GitHubLogin.fetchAccountName(conf.pat)
+            conf.account = login
         }
         if (login.isBlank()) throw RuntimeException("无法获取 GitHub 用户名")
 
-        val repoName = "$login/ME-OKR"
+        if (conf.repo.isBlank()) conf.repo = "ME-OKR"
+        val name = conf.repo.substringAfter('/').ifBlank { "ME-OKR" }
+
         val payload = buildJsonObject {
-            put("name", "ME-OKR")
+            put("name", name)
             put("private", true)
             put("auto_init", false)
         }.toString()
@@ -116,18 +119,33 @@ object GitHubSync {
             if (!e.message.orEmpty().contains("422")) throw e
         }
 
-        conf.repo = repoName
         if (conf.branch.isBlank()) conf.branch = "main"
-        if (conf.account.isBlank()) conf.account = login
         SyncConfig.save(context, conf)
-        repoName
+        "$login/$name"
+    }
+
+    /** 把用户填的仓库名解析成 owner/name：只填 ME-OKR 时自动补当前账号前缀 */
+    private suspend fun resolveRepo(context: Context): String = withContext(Dispatchers.IO) {
+        val conf = SyncConfig.load(context)
+        if (conf.repo.isBlank()) {
+            ensureRepo(context)
+            return@withContext resolveRepo(context)
+        }
+        if (conf.repo.contains('/')) return@withContext conf.repo
+        var login = conf.account
+        if (login.isBlank()) {
+            login = GitHubLogin.fetchAccountName(conf.pat)
+            conf.account = login
+            SyncConfig.save(context, conf)
+        }
+        "$login/${conf.repo}"
     }
 
     /** 上传 JsonData 全部文件到仓库 data/ 目录（逐文件 commit，已存在则带 sha 更新） */
     suspend fun push(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
         require(conf.pat.isNotBlank()) { "请先登录 GitHub 账号或填写 Token" }
-        if (conf.repo.isBlank()) ensureRepo(context)
+        val repo = resolveRepo(context)
         val files = JsonStore.allFiles()
         if (files.isEmpty()) return@withContext "没有可上传的数据"
         var okCount = 0
@@ -138,7 +156,7 @@ object GitHubSync {
                 // 查询已有文件 sha
                 var sha: String? = null
                 try {
-                    val existing = parseObj(httpCall(conf, "$API/repos/${conf.repo}/contents/data/${f.name}?ref=${conf.branch}", "GET", null))
+                    val existing = parseObj(httpCall(conf, "$API/repos/$repo/contents/data/${f.name}?ref=${conf.branch}", "GET", null))
                     sha = (existing["sha"])?.toString()?.trim('"')
                 } catch (_: Exception) { /* 不存在则新建 */ }
 
@@ -148,7 +166,7 @@ object GitHubSync {
                     put("branch", conf.branch)
                     if (sha != null) put("sha", sha)
                 }.toString()
-                parseObj(httpCall(conf, "$API/repos/${conf.repo}/contents/data/${f.name}", "PUT", payload))
+                parseObj(httpCall(conf, "$API/repos/$repo/contents/data/${f.name}", "PUT", payload))
                 okCount++
             } catch (e: Exception) {
                 lastErr = e.message
@@ -167,9 +185,9 @@ object GitHubSync {
     suspend fun pull(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
         require(conf.pat.isNotBlank()) { "请先登录 GitHub 账号或填写 Token" }
-        if (conf.repo.isBlank()) ensureRepo(context)
+        val repo = resolveRepo(context)
         val items: List<JsonObject> = try {
-            val text = httpCall(conf, "$API/repos/${conf.repo}/contents/data?ref=${conf.branch}", "GET", null)
+            val text = httpCall(conf, "$API/repos/$repo/contents/data?ref=${conf.branch}", "GET", null)
             val el = JsonStore.json.parseToJsonElement(text)
             (el as? kotlinx.serialization.json.JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
         } catch (e: Exception) {
@@ -188,7 +206,7 @@ object GitHubSync {
             val name = item["name"]?.toString()?.trim('"') ?: continue
             if (!name.endsWith(".json")) continue
             try {
-                val detail = parseObj(httpCall(conf, "$API/repos/${conf.repo}/contents/data/$name?ref=${conf.branch}", "GET", null))
+                val detail = parseObj(httpCall(conf, "$API/repos/$repo/contents/data/$name?ref=${conf.branch}", "GET", null))
                 val contentB64 = detail["content"]?.toString()?.trim('"') ?: continue
                 val text = String(Base64.getMimeDecoder().decode(contentB64), Charsets.UTF_8)
                 File(JsonStore.dir, name).writeText(text)
