@@ -6,9 +6,12 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +31,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
@@ -37,12 +41,15 @@ import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,8 +60,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.joe.mepe.data.DataBus
@@ -72,16 +83,20 @@ import com.joe.mepe.ui.PieSlice
 import com.joe.mepe.ui.ProgressRing
 import com.joe.mepe.ui.QuickLinks
 import com.joe.mepe.ui.Routes
+import com.joe.mepe.ui.RoundedProgressBar
 import com.joe.mepe.ui.ScreenHeader
 import com.joe.mepe.ui.SectionCard
+import com.joe.mepe.ui.Segmented
 import com.joe.mepe.ui.StatRow
 import com.joe.mepe.ui.Stepper
 import com.joe.mepe.ui.ToggleRow
 import com.joe.mepe.ui.rememberData
 import com.joe.mepe.ui.theme.parseHexColor
 import kotlinx.coroutines.delay
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 
@@ -204,6 +219,7 @@ fun fmtMinutes(min: Long): String = if (min >= 60) "${min / 60}小时${min % 60}
 fun TimeTrackScreen(nav: (String) -> Unit) {
     var tick by remember { mutableIntStateOf(0) }
     var showTagManager by remember { mutableStateOf(false) }
+    var showStatsSheet by remember { mutableStateOf(false) }
     var showPomoSettings by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -256,7 +272,12 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
             title = "时间",
             icon = Icons.Filled.Timer,
             subtitle = if (running != null) "正在计时" else "点标签开始计时",
-            actions = { QuickLinks(Routes.TIME, nav) }
+            actions = {
+                IconButton(onClick = { showStatsSheet = true }, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.Filled.Insights, "时间统计", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(21.dp))
+                }
+                QuickLinks(Routes.TIME, nav)
+            }
         )
 
         StatRow(listOf(
@@ -363,6 +384,9 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
     if (showTagManager) {
         TimeTagManagerDialog(onClose = { showTagManager = false })
     }
+    if (showStatsSheet) {
+        TimeStatsSheet(onClose = { showStatsSheet = false })
+    }
     if (showPomoSettings) PomodoroSettingsDialog(onClose = { showPomoSettings = false })
 }
 
@@ -412,12 +436,12 @@ private fun PomodoroCard(onOpenSettings: () -> Unit) {
         Spacer(Modifier.height(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             ProgressRing(
-                progress = progress, sizeDp = 150, stroke = 12f, color = phaseColor,
+                progress = progress, sizeDp = 118, stroke = 10f, color = phaseColor,
                 centerContent = {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             if (!running) "未开始" else if (paused) "已暂停" else fmtMs(remaining),
-                            style = MaterialTheme.typography.headlineSmall,
+                            style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = if (running && !paused) phaseColor else MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -425,39 +449,42 @@ private fun PomodoroCard(onOpenSettings: () -> Unit) {
                     }
                 }
             )
-            Spacer(Modifier.width(16.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(Modifier.width(14.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(
                     onClick = {
                         if (!running || paused) PomodoroEngine.start() else PomodoroEngine.pause()
                     },
                     shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.width(104.dp)
+                    modifier = Modifier.width(88.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)
                 ) {
-                    Icon(if (running && !paused) Icons.Filled.Pause else Icons.Filled.PlayArrow, null, Modifier.size(16.dp))
+                    Icon(if (running && !paused) Icons.Filled.Pause else Icons.Filled.PlayArrow, null, Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(when { !running -> "开始"; paused -> "继续"; else -> "暂停" })
+                    Text(when { !running -> "开始"; paused -> "继续"; else -> "暂停" }, style = MaterialTheme.typography.labelLarge)
                 }
                 OutlinedButton(
                     onClick = { PomodoroEngine.skip() },
                     shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.width(104.dp),
+                    modifier = Modifier.width(88.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
                     enabled = running
                 ) {
-                    Icon(Icons.Filled.SkipNext, null, Modifier.size(16.dp))
+                    Icon(Icons.Filled.SkipNext, null, Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("跳过")
+                    Text("跳过", style = MaterialTheme.typography.labelLarge)
                 }
                 OutlinedButton(
                     onClick = { PomodoroEngine.stop() },
                     shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.width(104.dp),
+                    modifier = Modifier.width(88.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
                     enabled = running,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Icon(Icons.Filled.Stop, null, Modifier.size(16.dp))
+                    Icon(Icons.Filled.Stop, null, Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("重置")
+                    Text("重置", style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -658,5 +685,191 @@ private fun PomodoroSettingsDialog(onClose: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+/**
+ * 时间统计底部弹窗（从下往上浮出）：周期切换 + 总览统计 + 扇形分布 + 各标签时长 + 当日甘特时间轴 + 近14天趋势。
+ * span: 0=今日 1=本周 2=本月 3=全部
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TimeStatsSheet(onClose: () -> Unit) {
+    val rev = DataBus.rev
+    var span by remember { mutableStateOf(0) }
+    val tags = remember(rev) { Repos.timeTags() }
+    val records = remember(rev) { Repos.timeRecords().filter { it.endTime != null } }
+    val today = LocalDate.now()
+
+    val (s, e) = when (span) {
+        0 -> today to today
+        1 -> today.with(DayOfWeek.MONDAY) to today
+        2 -> today.withDayOfMonth(1) to today
+        else -> null to null
+    }
+    val inRange = records.filter { r ->
+        val d = try { LocalDate.parse(r.date) } catch (_: Exception) { return@filter false }
+        (s == null || !d.isBefore(s)) && (e == null || !d.isAfter(e))
+    }
+    val perTag = tags.map { t ->
+        Triple(t, inRange.filter { it.tagId == t.id }.sumOf { it.minutes() },
+            parseHexColor(t.color, MaterialTheme.colorScheme.primary))
+    }.filter { it.second > 0 }.sortedByDescending { it.second }
+    val total = perTag.sumOf { it.second }
+
+    // 日均：按周期覆盖天数
+    val spanDays = when (span) {
+        0 -> 1L
+        1 -> today.dayOfWeek.value.toLong()
+        2 -> today.dayOfMonth.toLong()
+        else -> records.mapNotNull { runCatching { LocalDate.parse(it.date) }.getOrNull() }
+            .minOrNull()?.let { ChronoUnit.DAYS.between(it, today) + 1 } ?: 1L
+    }.coerceAtLeast(1)
+
+    val slices = perTag.map { (t, min, c) -> PieSlice(t.name, min.toDouble(), c) }
+    val todayRecords = records.filter { it.date == today.toString() }
+    val days14 = (13 downTo 0).map { today.minusDays(it.toLong()) }
+    val daily = days14.map { d -> records.filter { it.date == d.toString() }.sumOf { it.minutes() }.toDouble() }
+
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    ModalBottomSheet(onDismissRequest = onClose, sheetState = sheetState) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+        ) {
+            Text("时间统计", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            Segmented(listOf("今日", "本周", "本月", "全部"), span) { span = it }
+            Spacer(Modifier.height(12.dp))
+
+            StatRow(listOf(
+                Triple("总计时长", fmtMinutes(total), null),
+                Triple("记录", "${inRange.size} 条", null),
+                Triple("日均", fmtMinutes(total / spanDays), null),
+            ))
+            Spacer(Modifier.height(4.dp))
+
+            SectionCard(title = "时间分布（扇形图）") {
+                if (perTag.isEmpty()) EmptyHint("此范围没有计时记录")
+                else DonutChart(slices = slices, centerText = fmtMinutes(total))
+            }
+
+            SectionCard(title = "各标签时长") {
+                if (perTag.isEmpty()) EmptyHint("此范围没有计时记录")
+                else perTag.forEach { (t, min, c) ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ColorDot(c, sizeDp = 10)
+                        Spacer(Modifier.width(8.dp))
+                        Text(t.name, Modifier.width(78.dp), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            fmtMinutes(min), style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold, color = c
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        RoundedProgressBar(
+                            progress = if (total > 0) min.toFloat() / total else 0f,
+                            modifier = Modifier.weight(1f),
+                            heightDp = 10,
+                            color = c
+                        )
+                        Text(
+                            if (total > 0) " ${(min * 100 / total)}%" else "",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            SectionCard(title = "今日时间轴（甘特图）") {
+                DayGanttChart(todayRecords, tags)
+            }
+
+            if (daily.any { it > 0 }) {
+                SectionCard(title = "近 14 天每日时长") {
+                    BarChart(daily, days14.map { "${it.monthValue}/${it.dayOfMonth}" })
+                }
+            }
+
+            Spacer(Modifier.height(28.dp))
+        }
+    }
+}
+
+/** 当日 24 小时甘特时间轴：每标签一行，色块为该标签的计时区间，竖线每 3 小时一条 */
+@Composable
+private fun DayGanttChart(records: List<TimeRecord>, tags: List<TimeTag>) {
+    val groups = tags.map { t -> t to records.filter { it.tagId == t.id }.sortedBy { it.startTime } }
+        .filter { it.second.isNotEmpty() }
+    if (groups.isEmpty()) {
+        EmptyHint("今天还没有计时记录")
+        return
+    }
+    val grid = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
+
+    Column {
+        // 小时刻度头
+        Row(Modifier.fillMaxWidth()) {
+            Spacer(Modifier.width(62.dp))
+            Row(Modifier.weight(1f)) {
+                for (h in 0 until 24 step 3) {
+                    Text(
+                        "%02d".format(h),
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(Modifier.width(2.dp))
+        }
+        Spacer(Modifier.height(4.dp))
+        groups.forEach { (tag, recs) ->
+            val color = parseHexColor(tag.color, MaterialTheme.colorScheme.primary)
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    tag.name, Modifier.width(62.dp),
+                    style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Medium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+                Box(
+                    Modifier.weight(1f).height(16.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                ) {
+                    Canvas(Modifier.fillMaxSize()) {
+                        val w = size.width
+                        val h = size.height
+                        for (i in 0..8) {
+                            drawLine(grid, Offset(w * i / 8f, 0f), Offset(w * i / 8f, h), strokeWidth = 1f)
+                        }
+                        recs.forEach { r ->
+                            val startF = r.startTime.toLocalTime().toSecondOfDay() / 86400f
+                            val endF = (r.endTime?.toLocalTime() ?: LocalTime.now()).toSecondOfDay() / 86400f
+                            val left = (startF.coerceIn(0f, 1f)) * w
+                            val barW = (((endF - startF).coerceIn(0f, 1f)) * w).coerceAtLeast(3f)
+                            drawRoundRect(
+                                color = color,
+                                topLeft = Offset(left, 2.dp.toPx()),
+                                size = Size(barW, h - 4.dp.toPx()),
+                                cornerRadius = CornerRadius(3.dp.toPx())
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "横轴为 0-24 时（竖线每 3 小时），色块 = 该标签的计时区间",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
