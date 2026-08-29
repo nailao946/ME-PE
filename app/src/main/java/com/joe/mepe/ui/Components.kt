@@ -799,10 +799,10 @@ private fun Modifier.androidx_hueBar(): Modifier =
     }
 
 /**
- * 左滑露出「编辑 / 删除」图标动作；滑过一半吸附打开，否则弹回。
- * 动作区固定 116dp 靠右：右侧圆角与卡片一致，左侧两个凹角（内圆角）与卡片的圆角衔接，
- * 滑开后看起来像一张连续的卡片；动作随滑动进度淡入（关闭时完全隐藏）。
- * locked=true 时冻结左滑并弹回（如拖动排序中）；锁定切换不重建手势，避免打断拖动。
+ * 左滑露出「编辑 / 删除」圆形大按钮；滑过一半吸附打开，否则弹回。
+ * 动作区固定 132dp 靠右：底面延续卡片色，左侧凹角（内圆角）与卡片圆角衔接，
+ * 中间是两个 48dp 圆形按钮（编辑=主题蓝，删除=红色），图标 22dp，点击整块半区即可触发。
+ * 动作随滑动进度淡入（关闭时完全隐藏）。locked=true 时冻结左滑并弹回（如拖动排序中）。
  */
 @Composable
 fun SwipeReveal(
@@ -813,7 +813,7 @@ fun SwipeReveal(
     cornerDp: Int = 14,
     content: @Composable () -> Unit,
 ) {
-    val maxSwipePx = with(androidx.compose.ui.platform.LocalDensity.current) { 116.dp.toPx() }
+    val maxSwipePx = with(androidx.compose.ui.platform.LocalDensity.current) { 132.dp.toPx() }
     val cornerPx = with(androidx.compose.ui.platform.LocalDensity.current) { cornerDp.dp.toPx() }
     val offsetX = remember { androidx.compose.animation.core.Animatable(0f) }
     val scope = rememberCoroutineScope()
@@ -825,43 +825,57 @@ fun SwipeReveal(
     }
 
     Box(modifier.fillMaxWidth()) {
-        // 动作层：固定 116dp 靠右，整体按滑动进度淡入（绘制期求值），
-        // 形状 = 左侧凹角 + 右侧圆角，与卡片完全衔接
+        // 动作层：底面延续卡片色 + 凹角形状衔接卡片；两个圆形按钮
         val actionShape = remember(cornerPx) { SwipeActionsShape(cornerPx) }
         Row(
             Modifier
                 .align(Alignment.CenterEnd)
-                .width(116.dp)
+                .width(132.dp)
                 .fillMaxHeight()
                 .androidx_graphicsAlpha { ((-offsetX.value) / (maxSwipePx / 4f)).coerceIn(0f, 1f) }
-                .clip(actionShape),
+                .clip(actionShape)
+                .background(MaterialTheme.colorScheme.surface),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // 编辑（蓝色圆钮）
             Box(
                 Modifier
-                    .width(58.dp)
+                    .width(66.dp)
                     .fillMaxHeight()
-                    .background(Color(0xFF3E7BFA))
                     .clickable {
                         onEdit()
                         scope.launch { offsetX.animateTo(0f, tween(180)) }
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Filled.Edit, "编辑", tint = Color.White, modifier = Modifier.size(20.dp))
+                Box(
+                    Modifier
+                        .size(48.dp)
+                        .background(Color(0xFF3E7BFA), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Edit, "编辑", tint = Color.White, modifier = Modifier.size(22.dp))
+                }
             }
+            // 删除（红色圆钮）
             Box(
                 Modifier
-                    .width(58.dp)
+                    .width(66.dp)
                     .fillMaxHeight()
-                    .background(MaterialTheme.colorScheme.error)
                     .clickable {
                         onDelete()
                         scope.launch { offsetX.animateTo(0f, tween(180)) }
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Filled.Delete, "删除", tint = Color.White, modifier = Modifier.size(20.dp))
+                Box(
+                    Modifier
+                        .size(48.dp)
+                        .background(MaterialTheme.colorScheme.error, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Delete, "删除", tint = Color.White, modifier = Modifier.size(22.dp))
+                }
             }
         }
         // 内容层：向左滑出露出动作
