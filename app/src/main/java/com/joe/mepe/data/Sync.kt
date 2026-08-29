@@ -99,11 +99,11 @@ object GitHubSync {
 
     private const val API = "https://api.github.com"
 
-    private fun request(conf: SyncConfig.Conf, url: String, method: String, body: String?): Request =
+    private fun request(conf: SyncConfig.Conf, url: String, method: String, body: String?, accept: String = "application/vnd.github+json"): Request =
         Request.Builder()
             .url(url)
             .header("Authorization", "Bearer ${conf.pat}")
-            .header("Accept", "application/vnd.github+json")
+            .header("Accept", accept)
             .header("User-Agent", "ME-PE")
             .method(method, body?.toRequestBody("application/json".toMediaType()))
             .build()
@@ -116,6 +116,25 @@ object GitHubSync {
             if (!r.isSuccessful) throw RuntimeException("HTTP ${r.code}：${text.take(300)}")
             return text
         }
+    }
+
+    /** GET 请求（可指定 Accept），失败自动重试一次：移动网络到 GitHub 的链路不稳，偶发响应不完整 */
+    private fun httpGet(conf: SyncConfig.Conf, url: String, accept: String): String {
+        var last: Exception? = null
+        repeat(2) { attempt ->
+            try {
+                val resp = http.newCall(request(conf, url, "GET", null, accept)).execute()
+                resp.use { r ->
+                    val text = r.body?.string() ?: ""
+                    if (!r.isSuccessful) throw RuntimeException("HTTP ${r.code}：${text.take(300)}")
+                    return text
+                }
+            } catch (e: Exception) {
+                last = e
+                if (attempt == 0) try { Thread.sleep(1200) } catch (_: InterruptedException) { }
+            }
+        }
+        throw last ?: RuntimeException("请求失败")
     }
 
     private fun parseObj(text: String): JsonObject =
@@ -262,13 +281,19 @@ object GitHubSync {
         else base
     }
 
-    /** 从仓库 data/ 目录下载并覆盖本地 JsonData（先做本地备份） */
+    /** 从仓库 data/ 目录下载并覆盖本地 JsonData（先做本地备份）。
+     *  每个文件优先用 raw 接口直接取文件原文（响应体即文件内容，不经 Base64 编解码，
+     *  规避移动网络下 Base64 传输损坏导致的 "Last unit does not have enough valid bits"）；
+     *  写盘前校验是有效 JSON，损坏内容不会写进本地数据；单个文件失败不影响其它文件，
+     *  失败的文件名与原因会列在结果里。 */
     suspend fun pull(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
         require(conf.pat.isNotBlank()) { "请先登录 GitHub 账号或填写 Token" }
         val repo = resolveRepo(context)
+
+        // 目录清单：一次拿到每个文件的名字、大小与 sha
         val items: List<JsonObject> = try {
-            val text = httpCall(conf, "$API/repos/$repo/contents/data?ref=${conf.branch}", "GET", null)
+            val text = httpGet(conf, "$API/repos/$repo/contents/data?ref=${conf.branch}", "application/vnd.github+json")
             val el = JsonStore.json.parseToJsonElement(text)
             (el as? kotlinx.serialization.json.JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
         } catch (e: Exception) {
@@ -283,18 +308,43 @@ object GitHubSync {
 
         var n = 0
         var lastErr: String? = null
+        val failed = mutableListOf<String>()
         val newShas = conf.fileShas.toMutableMap()
         for (item in items) {
             val name = item["name"]?.toString()?.trim('"') ?: continue
             if (!name.endsWith(".json")) continue
+            val size = item["size"]?.toString()?.trim('"')?.toLongOrNull() ?: 0L
+            val sha = item["sha"]?.toString()?.trim('"')
             try {
-                val detail = parseObj(httpCall(conf, "$API/repos/$repo/contents/data/$name?ref=${conf.branch}", "GET", null))
-                val contentB64 = detail["content"]?.toString()?.trim('"') ?: continue
-                val text = String(Base64.getMimeDecoder().decode(contentB64), Charsets.UTF_8)
-                File(JsonStore.dir, name).writeText(text)
-                detail["sha"]?.toString()?.trim('"')?.let { newShas[name] = it }
+                // 首选 raw 方式：响应体就是文件内容本身，不经 Base64
+                var text: String? = try {
+                    val raw = httpGet(conf, "$API/repos/$repo/contents/data/$name?ref=${conf.branch}", "application/vnd.github.raw")
+                    if (raw.isNotEmpty() || size == 0L) raw else null
+                } catch (_: Exception) { null }
+
+                // 兜底：raw 拿不到时退回 JSON 接口 + Base64 解码
+                if (text == null) {
+                    val detail = parseObj(httpCall(conf, "$API/repos/$repo/contents/data/$name?ref=${conf.branch}", "GET", null))
+                    val content = (detail["content"] as? kotlinx.serialization.json.JsonPrimitive)
+                        ?.takeIf { it.isString }?.content ?: ""
+                    if (content.isNotBlank()) {
+                        text = String(Base64.getMimeDecoder().decode(content.replace("\n", "").replace("\r", "")), Charsets.UTF_8)
+                    }
+                }
+
+                val t = text
+                if (t == null) {
+                    failed.add(name); lastErr = "文件内容为空"; continue
+                }
+                // 校验是有效 JSON 再写入，防止把传输损坏的内容存成本地数据
+                try { JsonStore.json.parseToJsonElement(t) } catch (_: Exception) {
+                    failed.add(name); lastErr = "下载内容不是有效 JSON"; continue
+                }
+                File(JsonStore.dir, name).writeText(t)
+                sha?.let { newShas[name] = it }
                 n++
             } catch (e: Exception) {
+                failed.add(name)
                 lastErr = e.message
             }
         }
@@ -304,8 +354,9 @@ object GitHubSync {
             SyncConfig.save(context, conf)
             DataBus.bump()
         }
-        if (n == items.size) "✓ 已下载 $n 个文件（原数据已备份）"
-        else "已下载 $n/${items.size} 个" + (lastErr?.let { "，错误：$it" } ?: "")
+        if (failed.isEmpty()) return@withContext "✓ 已下载 $n 个文件（原数据已备份）"
+        val names = failed.take(4).joinToString("、") + if (failed.size > 4) "等${failed.size}个文件" else ""
+        "已下载 $n/${items.size} 个，失败：$names" + (lastErr?.let { "（$it）" } ?: "")
     }
 }
 
