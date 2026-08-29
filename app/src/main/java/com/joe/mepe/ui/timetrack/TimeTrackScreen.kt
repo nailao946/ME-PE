@@ -1,5 +1,8 @@
 package com.joe.mepe.ui.timetrack
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -310,8 +313,7 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
                     ) {
                         tags.forEach { t ->
                             val isRunning = running?.tagId == t.id
-                            val mins = todayRecords.filter { it.tagId == t.id }.sumOf { it.minutes() }
-                            TimeTagChip(t, isRunning, mins) {
+                            TimeTagChip(t, isRunning) {
                                 if (isRunning) endTimer(t.id) else beginTimer(t.id)
                             }
                         }
@@ -462,38 +464,50 @@ private fun PomodoroCard(onOpenSettings: () -> Unit) {
     }
 }
 
-/** 时间标签按钮（点=开始/停止计时；运行中高亮实底） */
+/** 时间标签按钮（只有文字：点=开始/停止计时；开始时弹跳动画，计时中呼吸动画+实底高亮） */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TimeTagChip(tag: TimeTag, isRunning: Boolean, todayMinutes: Long, onClick: () -> Unit) {
+private fun TimeTagChip(tag: TimeTag, isRunning: Boolean, onClick: () -> Unit) {
     val color = parseHexColor(tag.color, MaterialTheme.colorScheme.primary)
-    val content = if (isRunning) Color.White else color
-    Row(
+    val bg by animateColorAsState(if (isRunning) color else color.copy(alpha = 0.13f), tween(250), label = "bg")
+    val border by animateColorAsState(if (isRunning) color else color.copy(alpha = 0.55f), tween(250), label = "border")
+    val content by animateColorAsState(if (isRunning) Color.White else color, tween(250), label = "content")
+
+    // 点击开始：弹跳一下（0.9 → 弹回 1）；计时中：轻微呼吸（0.98 ↔ 1.04）
+    val scale = remember { androidx.compose.animation.core.Animatable(1f) }
+    LaunchedEffect(isRunning) {
+        if (isRunning) {
+            scale.snapTo(0.9f)
+            scale.animateTo(
+                1f,
+                androidx.compose.animation.core.spring(
+                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                    stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
+                )
+            )
+            while (true) {
+                scale.animateTo(1.04f, tween(800))
+                scale.animateTo(0.98f, tween(800))
+            }
+        } else {
+            scale.animateTo(1f, tween(200))
+        }
+    }
+
+    Box(
         Modifier
             .clip(RoundedCornerShape(20.dp))
-            .background(if (isRunning) color else color.copy(alpha = 0.13f))
-            .border(1.5.dp, if (isRunning) color else color.copy(alpha = 0.55f), RoundedCornerShape(20.dp))
+            .background(bg)
+            .border(1.5.dp, border, RoundedCornerShape(20.dp))
+            .graphicsLayer { scaleX = scale.value; scaleY = scale.value }
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 16.dp, vertical = 9.dp)
     ) {
-        Icon(
-            if (isRunning) Icons.Filled.Stop else Icons.Filled.PlayArrow, null,
-            tint = content, modifier = Modifier.size(14.dp)
-        )
-        Spacer(Modifier.width(5.dp))
         Text(
             tag.name, color = content,
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = if (isRunning) FontWeight.Bold else FontWeight.Medium
         )
-        if (todayMinutes > 0) {
-            Spacer(Modifier.width(6.dp))
-            Text(
-                fmtMinutes(todayMinutes),
-                color = content.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall
-            )
-        }
     }
 }
 
