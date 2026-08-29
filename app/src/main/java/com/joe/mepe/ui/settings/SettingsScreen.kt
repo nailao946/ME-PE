@@ -284,7 +284,7 @@ private fun SyncPage(onBack: () -> Unit) {
     val rev = DataBus.rev
     val syncConf = remember(rev) { SyncConfig.load(ctx) }
     var syncPat by remember(syncConf.pat) { mutableStateOf(syncConf.pat) }
-    var syncRepo by remember(syncConf.repo) { mutableStateOf(syncConf.repo.ifBlank { "ME-OKR" }) }
+    var syncRepo by remember(syncConf.repo) { mutableStateOf(syncConf.repo.ifBlank { "ME-Data" }) }
     var syncBranch by remember(syncConf.branch) { mutableStateOf(syncConf.branch.ifBlank { "main" }) }
     var syncAuto by remember(syncConf.autoPush) { mutableStateOf(syncConf.autoPush) }
     var syncing by remember { mutableStateOf(false) }
@@ -306,7 +306,7 @@ private fun SyncPage(onBack: () -> Unit) {
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "跳转 GitHub 网页登录并点允许即可，自动获取 Token 并创建私有仓库 ME-OKR，一次登录长期有效。",
+                    "跳转 GitHub 网页登录并点允许即可，自动获取 Token 并创建私有仓库 ME-Data，一次登录长期有效。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(10.dp))
@@ -337,7 +337,7 @@ private fun SyncPage(onBack: () -> Unit) {
                                     fresh.account = GitHubLogin.fetchAccountName(r)
                                     SyncConfig.save(ctx, fresh)
                                     syncPat = r
-                                    loginMsg = "✓ 授权成功，正在自动创建同步仓库 ME-OKR…"
+                                    loginMsg = "✓ 授权成功，正在自动创建同步仓库 ME-Data…"
                                     loginMsg = try {
                                         val repo = GitHubSync.ensureRepo(ctx)
                                         "✓ 授权成功，已配置仓库 $repo，可直接上传/下载"
@@ -362,7 +362,7 @@ private fun SyncPage(onBack: () -> Unit) {
 
             // 同步设置
             SectionCard(title = "同步设置") {
-                LabeledField("仓库名", syncRepo, { syncRepo = it }, placeholder = "ME-OKR")
+                LabeledField("仓库名", syncRepo, { syncRepo = it }, placeholder = "ME-Data")
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "只填仓库名即可：自动创建私有仓库并挂到你的账号下，无需填 owner/",
@@ -607,10 +607,10 @@ private fun AboutPage(onBack: () -> Unit) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader(title = "关于", icon = Icons.Filled.Info, subtitle = "目标地图 PE", onBack = onBack)
+        ScreenHeader(title = "关于", icon = Icons.Filled.Info, subtitle = "ME", onBack = onBack)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             SectionCard(title = null) {
-                Text("目标地图 PE（ME PE）v2.4.11", fontWeight = FontWeight.SemiBold)
+                Text("ME（个人管理系统）v${com.joe.mepe.BuildConfig.VERSION_NAME}", fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "个人目标管理 & 健康追踪 · 纯本地存储，可选 GitHub 云同步",
@@ -634,12 +634,12 @@ private fun AboutPage(onBack: () -> Unit) {
                     )
                 }
                 Row(
-                    Modifier.fillMaxWidth().clickable { openUrl("https://github.com/nailao946/OKR") },
+                    Modifier.fillMaxWidth().clickable { openUrl("https://github.com/nailao946/ME") },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("💻 GitHub（桌面端）", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "github.com/nailao946/OKR",
+                        "github.com/nailao946/ME",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary
                     )
                 }

@@ -43,7 +43,13 @@ object SyncConfig {
 
     fun load(context: Context): Conf = try {
         val f = file(context)
-        if (f.exists()) json.decodeFromString(Conf.serializer(), f.readText()) else Conf()
+        val c = if (f.exists()) json.decodeFromString(Conf.serializer(), f.readText()) else Conf()
+        // 数据仓库由 ME-OKR 更名为 ME-Data：旧配置自动迁移，避免与桌面端同步中断
+        if (c.repo == "ME-OKR" || c.repo.endsWith("/ME-OKR")) {
+            c.repo = if (c.repo.contains('/')) c.repo.substringBefore('/') + "/ME-Data" else "ME-Data"
+            save(context, c)
+        }
+        c
     } catch (_: Exception) { Conf() }
 
     fun save(context: Context, conf: Conf) {
@@ -82,7 +88,7 @@ object GitHubSync {
         JsonStore.json.parseToJsonElement(text) as JsonObject
 
     /**
-     * 确保同步仓库存在：默认 ME-OKR（私有），用户只填仓库名时自动挂到当前账号下（已存在则直接用）。
+     * 确保同步仓库存在：默认 ME-Data（私有），用户只填仓库名时自动挂到当前账号下（已存在则直接用）。
      * 登录后与上传/下载前调用，用户无需手填 owner/ 前缀。配置里只保存仓库名。
      */
     suspend fun ensureRepo(context: Context): String = withContext(Dispatchers.IO) {
@@ -96,8 +102,8 @@ object GitHubSync {
         }
         if (login.isBlank()) throw RuntimeException("无法获取 GitHub 用户名")
 
-        if (conf.repo.isBlank()) conf.repo = "ME-OKR"
-        val name = conf.repo.substringAfter('/').ifBlank { "ME-OKR" }
+        if (conf.repo.isBlank()) conf.repo = "ME-Data"
+        val name = conf.repo.substringAfter('/').ifBlank { "ME-Data" }
 
         val payload = buildJsonObject {
             put("name", name)
@@ -126,7 +132,7 @@ object GitHubSync {
         "$login/$name"
     }
 
-    /** 把用户填的仓库名解析成 owner/name：只填 ME-OKR 时自动补当前账号前缀 */
+    /** 把用户填的仓库名解析成 owner/name：只填 ME-Data 时自动补当前账号前缀 */
     private suspend fun resolveRepo(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
         if (conf.repo.isBlank()) {
