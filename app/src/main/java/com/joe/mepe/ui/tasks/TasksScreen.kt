@@ -436,7 +436,11 @@ private fun DraggableTaskGroup(
     }
     registerOrder("p${task.id}", subtasks.map { it.id })
     Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-        SwipeReveal(onEdit = { onEdit(task) }, onDelete = { onDelete(task) }, locked = draggingKey != null) {
+        SwipeReveal(
+            onEdit = { onEdit(task) }, onDelete = { onDelete(task) },
+            locked = draggingKey != null,
+            panelColor = if (isDone) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
+        ) {
             DraggableCard(
                 itemKey = mainKey,
                 draggingKey = draggingKey, dragOffset = dragOffset, dropTargetKey = dropTargetKey,
@@ -448,8 +452,13 @@ private fun DraggableTaskGroup(
         subtasks.forEach { sub ->
             val key = "s${task.id}_${sub.id}"
             registerKey(key, sub.id)
+            val subDone = TaskLogic.isDoneOn(sub, date, completions)
             Box(Modifier.padding(start = 24.dp, top = 4.dp)) {
-                SwipeReveal(onEdit = { onEdit(sub) }, onDelete = { onDelete(sub) }, locked = draggingKey != null) {
+                SwipeReveal(
+                    onEdit = { onEdit(sub) }, onDelete = { onDelete(sub) },
+                    locked = draggingKey != null,
+                    panelColor = if (subDone) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
+                ) {
                     DraggableCard(
                         itemKey = key,
                         draggingKey = draggingKey, dragOffset = dragOffset, dropTargetKey = dropTargetKey,

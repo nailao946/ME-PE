@@ -800,10 +800,10 @@ private fun Modifier.androidx_hueBar(): Modifier =
     }
 
 /**
- * 左滑露出「编辑 / 删除」圆形大按钮；滑过一半吸附打开，否则弹回。
- * 动作区固定 132dp 靠右：底面延续卡片色，左侧凹角（内圆角）与卡片圆角衔接，
- * 中间是两个 48dp 圆形按钮（编辑=主题蓝，删除=红色），图标 22dp，点击整块半区即可触发。
- * 动作随滑动进度淡入（关闭时完全隐藏）。locked=true 时冻结左滑并弹回（如拖动排序中）。
+ * 左滑露出「编辑 / 删除」纯图标圆钮；滑过一半吸附打开，否则弹回。
+ * 动作区底色 = 内容卡片的容器色（panelColor 可传），配合左侧凹角，整块与任务条完全融为一体；
+ * 圆钮大小随行高自适应（子任务/子目标行更矮 → 圆钮更小），图标随圆钮缩放。
+ * 动作随滑动进度淡入放大（关闭时完全隐藏）。locked=true 时冻结左滑并弹回（如拖动排序中）。
  */
 @Composable
 fun SwipeReveal(
@@ -812,6 +812,7 @@ fun SwipeReveal(
     modifier: Modifier = Modifier,
     locked: Boolean = false,
     cornerDp: Int = 14,
+    panelColor: Color = MaterialTheme.colorScheme.surface,
     content: @Composable () -> Unit,
 ) {
     val maxSwipePx = with(androidx.compose.ui.platform.LocalDensity.current) { 144.dp.toPx() }
@@ -826,10 +827,8 @@ fun SwipeReveal(
     }
 
     Box(modifier.fillMaxWidth()) {
-        // 动作层：编辑/删除两块渐变色板从卡片色中"浮现"，无接缝；
-        // 各自的磨砂圆钮（白 25% 圆底 + 白图标 + 小字）随滑出上升淡入，删除侧略带迟滞
+        // 动作层：与卡片同色的整体面板 + 左凹角右圆角，视觉上就是任务条的一部分
         val actionShape = remember(cornerPx) { SwipeActionsShape(cornerPx) }
-        val surfaceC = MaterialTheme.colorScheme.surface
         val primaryC = MaterialTheme.colorScheme.primary
         val errorC = MaterialTheme.colorScheme.error
         val revealT = { ((-offsetX.value) / maxSwipePx).coerceIn(0f, 1f) }
@@ -840,13 +839,12 @@ fun SwipeReveal(
                 .fillMaxHeight()
                 .androidx_graphicsAlpha { ((-offsetX.value) / (maxSwipePx / 4f)).coerceIn(0f, 1f) }
                 .clip(actionShape)
+                .background(panelColor)
         ) {
             SwipeActionPanel(
-                label = "编辑",
                 icon = Icons.Filled.Edit,
-                brush = remember(surfaceC, primaryC) {
-                    Brush.horizontalGradient(0f to surfaceC, 0.45f to primaryC.copy(alpha = 0.75f), 1f to primaryC)
-                },
+                desc = "编辑",
+                circle = primaryC,
                 progress = revealT,
                 modifier = Modifier.weight(1f),
                 onClick = {
@@ -855,12 +853,10 @@ fun SwipeReveal(
                 },
             )
             SwipeActionPanel(
-                label = "删除",
                 icon = Icons.Filled.Delete,
-                brush = remember(errorC) {
-                    Brush.horizontalGradient(0f to errorC.copy(alpha = 0.9f), 1f to errorC)
-                },
-                progress = { (revealT() - 0.18f).coerceAtLeast(0f) / 0.82f },
+                desc = "删除",
+                circle = errorC,
+                progress = { (revealT() - 0.12f).coerceAtLeast(0f) / 0.88f },
                 modifier = Modifier.weight(1f),
                 onClick = {
                     onDelete()
@@ -902,47 +898,55 @@ private fun Modifier.androidx_graphicsAlpha(alpha: () -> Float): Modifier =
         Modifier.graphicsLayer { this.alpha = alpha() }
     )
 
+/** 读取面板高度（px），用于圆钮尺寸自适应行高 */
+private fun Modifier.androidx_onHeightChanged(onH: (Float) -> Unit): Modifier =
+    this.then(
+        Modifier.onSizeChanged { onH(it.height.toFloat()) }
+    )
+
 /**
- * 左滑动作面板（设计系统组件）：渐变色板 + 磨砂圆钮。
- * 内容（圆钮+文字）随滑出进度上升淡入（绘制期求值，不触发重组）；整块面板可点。
+ * 左滑动作面板（设计系统组件）：纯图标实色圆钮，直径随面板（行）高度自适应——
+ * 行越高圆钮越大（34~56dp 之间），子任务/子目标等矮行自动变小；随滑出进度淡入+弹出。
  */
 @Composable
 private fun SwipeActionPanel(
-    label: String,
     icon: ImageVector,
-    brush: Brush,
+    desc: String,
+    circle: Color,
     progress: () -> Float,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val minPx = with(density) { 34.dp.toPx() }
+    val maxPx = with(density) { 56.dp.toPx() }
+    val padPx = with(density) { 15.dp.toPx() }
+    var panelH by remember { mutableStateOf(0f) }
+    val diameterPx = if (panelH > 0f) (panelH - padPx * 2).coerceIn(minPx, maxPx) else maxPx
+
     Box(
         modifier
             .fillMaxHeight()
-            .background(brush)
+            .androidx_onHeightChanged { panelH = it }
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.graphicsLayer {
-                val t = progress()
-                alpha = t
-                translationY = (1f - t) * 12.dp.toPx()
-            }
+        Box(
+            Modifier
+                .graphicsLayer {
+                    val dPx = diameterPx
+                    val t = progress()
+                    alpha = t
+                    val s = 0.7f + 0.3f * t
+                    scaleX = s; scaleY = s
+                }
+                .size(with(density) { diameterPx.toDp() })
+                .background(circle, CircleShape),
+            contentAlignment = Alignment.Center
         ) {
-            Box(
-                Modifier
-                    .size(42.dp)
-                    .background(Color.White.copy(alpha = 0.25f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(icon, label, tint = Color.White, modifier = Modifier.size(21.dp))
-            }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                label, color = Color.White.copy(alpha = 0.95f),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold
+            Icon(
+                icon, desc, tint = Color.White,
+                modifier = Modifier.size(with(density) { (diameterPx * 0.46f).toDp() })
             )
         }
     }
