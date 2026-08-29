@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -255,13 +256,28 @@ fun TasksScreen(nav: (String) -> Unit) {
                     }
                 }
             }
-            TextButton(
-                onClick = {
-                    selectedDate = LocalDate.now()
-                    dateScope.launch { centerToday(animate = true) }
-                },
-                modifier = Modifier.padding(end = 8.dp)
-            ) { Text("今天") }
+            // 回到今天：与日期圆球同尺寸同语言的圆形按钮，主题色淡底描边
+            val todayColor = MaterialTheme.colorScheme.primary
+            Column(
+                Modifier
+                    .padding(start = 8.dp, end = 12.dp)
+                    .size(54.dp)
+                    .background(todayColor.copy(alpha = 0.10f), CircleShape)
+                    .border(1.2.dp, todayColor.copy(alpha = 0.4f), CircleShape)
+                    .clickable {
+                        selectedDate = LocalDate.now()
+                        dateScope.launch { centerToday(animate = true) }
+                    },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    Icons.Outlined.Today, "回到今天",
+                    tint = todayColor, modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.height(2.dp))
+                Text("今天", style = MaterialTheme.typography.labelSmall, color = todayColor, fontWeight = FontWeight.Medium)
+            }
         }
 
         // 标签过滤
