@@ -522,15 +522,11 @@ private fun SubGoalRow(
                 Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
                 // 进度条（量化=数值进度，普通=百分比进度）
-                Box(
-                    Modifier.fillMaxWidth().height(4.dp)
-                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(2.dp))
-                ) {
-                    Box(
-                        Modifier.fillMaxWidth(progress.toFloat()).height(4.dp)
-                            .background(color, RoundedCornerShape(2.dp))
-                    )
-                }
+                com.joe.mepe.ui.RoundedProgressBar(
+                    progress = progress.toFloat(),
+                    heightDp = 8,
+                    color = color
+                )
             }
             Box(
                 Modifier.size(28.dp).clickable { onEdit(goal) },

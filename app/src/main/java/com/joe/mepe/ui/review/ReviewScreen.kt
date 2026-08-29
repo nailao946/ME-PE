@@ -226,16 +226,12 @@ private fun TimeStatsCard(mode: Int, start: LocalDate, end: LocalDate) {
                         color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(Modifier.width(10.dp))
-                    Box(
-                        Modifier.weight(1f).height(6.dp)
-                            .background(MaterialTheme.colorScheme.surfaceVariant, androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
-                    ) {
-                        val frac = if (total > 0) min.toDouble() / total else 0.0
-                        Box(
-                            Modifier.fillMaxWidth(frac.toFloat()).height(6.dp)
-                                .background(color, androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
-                        )
-                    }
+                    com.joe.mepe.ui.RoundedProgressBar(
+                        progress = (if (total > 0) min.toDouble() / total else 0.0).toFloat(),
+                        modifier = Modifier.weight(1f),
+                        heightDp = 10,
+                        color = color
+                    )
                     Text(
                         if (total > 0) " ${(min * 100 / total)}%" else "",
                         style = MaterialTheme.typography.labelSmall,

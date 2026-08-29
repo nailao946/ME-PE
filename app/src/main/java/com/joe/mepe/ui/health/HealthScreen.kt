@@ -619,15 +619,15 @@ fun MoodTab() {
         }
         Column {
             counts.forEachIndexed { i, c ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(emojis[i], Modifier.width(30.dp))
-                    Box(Modifier.weight(1f).height(10.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(5.dp))) {
-                        val max = counts.max().coerceAtLeast(1)
-                        Box(Modifier.fillMaxWidth(c.toFloat() / max).height(10.dp).background(
-                            when (i) { 4 -> Color(0xFF2E9E5B); 3 -> Color(0xFF7CB342); 2 -> Color(0xFFE0A93C); 1 -> Color(0xFFE0603C); else -> Color(0xFFE5484D) },
-                            RoundedCornerShape(5.dp)
-                        ))
-                    }
+                    val max = counts.max().coerceAtLeast(1)
+                    com.joe.mepe.ui.RoundedProgressBar(
+                        progress = c.toFloat() / max,
+                        modifier = Modifier.weight(1f),
+                        heightDp = 12,
+                        color = when (i) { 4 -> Color(0xFF2E9E5B); 3 -> Color(0xFF7CB342); 2 -> Color(0xFFE0A93C); 1 -> Color(0xFFE0603C); else -> Color(0xFFE5484D) }
+                    )
                     Text("  $c 天", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }

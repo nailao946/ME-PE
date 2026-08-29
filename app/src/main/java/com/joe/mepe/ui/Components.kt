@@ -365,6 +365,40 @@ fun ColorDot(color: Color, sizeDp: Int = 10) {
     Box(Modifier.size(sizeDp.dp).background(color, CircleShape))
 }
 
+/**
+ * 圆角进度条（全 App 统一组件，来自 ui 组件库）：
+ * 加粗条体 + 药丸全圆角 + 进度变化平滑动画；不传颜色时跟随主题。
+ */
+@Composable
+fun RoundedProgressBar(
+    progress: Float,
+    modifier: Modifier = Modifier,
+    heightDp: Int = 10,
+    color: Color = MaterialTheme.colorScheme.primary,
+    trackColor: Color = MaterialTheme.colorScheme.surfaceVariant,
+) {
+    val anim by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = progress.coerceIn(0f, 1f),
+        animationSpec = androidx.compose.animation.core.tween(300),
+        label = "progress"
+    )
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(heightDp.dp)
+            .clip(RoundedCornerShape(50))
+            .background(trackColor)
+    ) {
+        Box(
+            Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(anim)
+                .clip(RoundedCornerShape(50))
+                .background(color)
+        )
+    }
+}
+
 // ============ 时间选择 ============
 
 @Composable

@@ -589,11 +589,12 @@ private fun TaskCard(
                 if (meta.isNotBlank())
                     Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (progress != null) {
-                    Box(Modifier.fillMaxWidth().padding(top = 4.dp).height(4.dp)
-                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(2.dp))) {
-                        Box(Modifier.fillMaxWidth(progress.toFloat()).height(4.dp)
-                            .background(accent ?: MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp)))
-                    }
+                    com.joe.mepe.ui.RoundedProgressBar(
+                        progress = progress.toFloat(),
+                        modifier = Modifier.padding(top = 6.dp),
+                        heightDp = 8,
+                        color = accent ?: MaterialTheme.colorScheme.primary
+                    )
                 }
             }
             if (draggable) {
@@ -748,10 +749,10 @@ private fun TaskDetailSheet(
                     color = MaterialTheme.colorScheme.primary
                 )
                 Spacer(Modifier.height(6.dp))
-                Box(Modifier.fillMaxWidth().height(6.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(3.dp))) {
-                    Box(Modifier.fillMaxWidth(((cur - start) / (target - start)).coerceIn(0.0, 1.0).toFloat()).height(6.dp)
-                        .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(3.dp)))
-                }
+                com.joe.mepe.ui.RoundedProgressBar(
+                    progress = ((cur - start) / (target - start)).coerceIn(0.0, 1.0).toFloat(),
+                    heightDp = 12
+                )
                 Spacer(Modifier.height(10.dp))
                 // 数值加减行：−1 / 输入数值 / 加N（更新模式=设为N）
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
