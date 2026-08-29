@@ -180,7 +180,7 @@ fun HealthOverview(onSwitchTab: (Int) -> Unit) {
     val sleepText = sleepRec?.let { "${it.value.toInt()}小时${((it.value % 1) * 60).toInt()}分" } ?: "—"
     val weight = records.lastOrNull { it.type == HealthTypes.WEIGHT }?.value?.let { "${it}kg" } ?: "—"
     val waterTotal = records.filter { it.type == HealthTypes.WATER && it.date == todayStr }.sumOf { it.value }
-    val waterGoal = Repos.getSetting("water_goal", "2000").toDoubleOrNull() ?: 2000.0
+    val waterGoal = Repos.getWaterGoal().toDoubleOrNull() ?: 2000.0
     val waterText = if (waterTotal > 0) "${waterTotal.toInt()}ml" else "—"
     val moodVal = records.lastOrNull { it.type == HealthTypes.MOOD && it.date == todayStr }?.value?.toInt()
     val moodText = moodVal?.let { listOf("😢", "😔", "😐", "😊", "😄")[(it - 1).coerceIn(0, 4)] } ?: "—"
@@ -394,7 +394,7 @@ fun WaterTab() {
     val allWater = remember(rev) { healthRecords(HealthTypes.WATER) }
     val todayRecords = allWater.filter { it.date == today.toString() }.sortedBy { it.createdAt }
     val total = todayRecords.sumOf { it.value }
-    var goal by remember(rev) { mutableStateOf(Repos.getSetting("water_goal", "2000").toDoubleOrNull() ?: 2000.0) }
+    var goal by remember(rev) { mutableStateOf(Repos.getWaterGoal().toDoubleOrNull() ?: 2000.0) }
     val days = lastNDays(14)
     val waterColor = Color(0xFF4FC3F7)
     var addingContainer by remember { mutableStateOf(false) }
@@ -467,8 +467,8 @@ fun WaterTab() {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 com.joe.mepe.ui.Stepper(
                     "每日目标 ml", goal.toInt().toString(),
-                    { goal = (goal - 100).coerceAtLeast(500.0); Repos.setSetting("water_goal", goal.toInt().toString()) },
-                    { goal += 100; Repos.setSetting("water_goal", goal.toInt().toString()) },
+                    { goal = (goal - 100).coerceAtLeast(500.0); Repos.setWaterGoal(goal.toInt().toString()) },
+                    { goal += 100; Repos.setWaterGoal(goal.toInt().toString()) },
                     modifier = Modifier.weight(1f)
                 )
                 TextButton(onClick = {

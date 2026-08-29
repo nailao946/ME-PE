@@ -488,6 +488,29 @@ object Repos {
         DataBus.bump()
     }
 
+    /** 喝水目标：与桌面端共用 HealthWaterGoal 键，双端同步互通；
+     *  本机旧的 water_goal 键在首次读取/写入时自动迁移过来并清除。 */
+    fun getWaterGoal(default: String = "2000"): String {
+        val all = settings()
+        all.firstOrNull { it.key == "HealthWaterGoal" }?.let { return it.value.ifBlank { default } }
+        val legacy = all.firstOrNull { it.key == "water_goal" }
+        if (legacy != null) {
+            all.removeAll { it.key == "water_goal" }
+            all.add(AppSetting("HealthWaterGoal", legacy.value))
+            JsonStore.saveText("settings", JsonStore.json.encodeToString(settingK, all))
+            return legacy.value
+        }
+        return default
+    }
+
+    fun setWaterGoal(value: String) {
+        setSetting("HealthWaterGoal", value)
+        val all = settings()
+        if (all.removeAll { it.key == "water_goal" }) {
+            JsonStore.saveText("settings", JsonStore.json.encodeToString(settingK, all))
+        }
+    }
+
     // ---------- ai providers ----------
     private val aiK = ListSerializer(AiProvider.serializer())
     fun aiProviders(): MutableList<AiProvider> =

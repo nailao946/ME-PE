@@ -250,7 +250,7 @@ private fun AppearancePage(onBack: () -> Unit) {
 @Composable
 private fun GoalsPage(onBack: () -> Unit) {
     val rev = DataBus.rev
-    var waterGoal by remember(rev) { mutableStateOf(Repos.getSetting("water_goal", "2000")) }
+    var waterGoal by remember(rev) { mutableStateOf(Repos.getWaterGoal()) }
     var sedentaryGoal by remember(rev) { mutableStateOf(Repos.getSetting("sedentary_goal", "8")) }
     var msg by remember { mutableStateOf("") }
 
@@ -263,7 +263,7 @@ private fun GoalsPage(onBack: () -> Unit) {
                 LabeledField("每日起身活动目标（次）", sedentaryGoal, { sedentaryGoal = it })
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = {
-                    Repos.setSetting("water_goal", waterGoal)
+                    Repos.setWaterGoal(waterGoal)
                     Repos.setSetting("sedentary_goal", sedentaryGoal)
                     msg = "✓ 已保存"
                 }, shape = MaterialTheme.shapes.small) { Text("保存目标") }
