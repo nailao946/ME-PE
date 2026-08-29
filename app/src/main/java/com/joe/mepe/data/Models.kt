@@ -84,6 +84,8 @@ data class Goal(
     @SerialName("UpdatedAt") @Serializable(with = LocalDateTimeSerializer::class) var updatedAt: LocalDateTime = LocalDateTime.MIN,
     @SerialName("Notes") var notes: String? = null,
     @SerialName("TagId") var tagId: Int? = null,
+    /** 绑定的时间标签（TimeTagId，两端一致；目标下的任务默认继承） */
+    @SerialName("TimeTagId") var timeTagId: Int? = null,
     @SerialName("QuantitativeMode") var quantitativeMode: Int? = null,
     @SerialName("QuantitativeStart") var quantitativeStart: Double? = null,
     @SerialName("QuantitativeTarget") var quantitativeTarget: Double? = null,

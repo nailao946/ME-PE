@@ -5,7 +5,12 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.layout.onSizeChanged
 import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.input.pointer.pointerInput
@@ -567,7 +572,7 @@ val ColorPresets = listOf(
     0xFF8A8F9E, 0xFF6B7280, 0xFF5A6472, 0xFF3E4756,
 )
 
-/** 颜色选择器：圆形颜料盘（点色块即选，无需输入代码） */
+/** 颜色选择器：预设色板 + 全色 HSV 调色盘（色相条 + 饱和度/明度面板，可取任意颜色） */
 @Composable
 fun ColorPickerDialog(
     title: String,
@@ -575,44 +580,160 @@ fun ColorPickerDialog(
     onPick: (Color) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var hex by remember { mutableStateOf(colorToHex(initial)) }
-    val current = parseHexColor(hex, initial)
+    // 初始颜色 → HSV
+    val initHsv = remember {
+        FloatArray(3).also { arr ->
+            android.graphics.Color.colorToHSV(
+                android.graphics.Color.argb(
+                    (initial.alpha * 255).toInt(),
+                    (initial.red * 255).toInt(),
+                    (initial.green * 255).toInt(),
+                    (initial.blue * 255).toInt()
+                ), arr
+            )
+        }
+    }
+    var hue by remember { mutableStateOf(initHsv[0]) }
+    var sat by remember { mutableStateOf(initHsv[1]) }
+    var value by remember { mutableStateOf(initHsv[2]) }
+
+    val current = Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, value)))
+    val hueColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 1f, 1f)))
+
     Dialog(onDismissRequest = onDismiss) {
         Card(shape = MaterialTheme.shapes.large) {
-            Column(Modifier.padding(16.dp)) {
+            Column(
+                Modifier
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "点圆形色块选择颜色",
+                    "点色块快速选色，下方调色盘可取任意颜色",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(10.dp))
-                ColorPresets.chunked(4).forEach { row ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Spacer(Modifier.height(8.dp))
+
+                // 预设色块
+                ColorPresets.chunked(6).forEach { row ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                         row.forEach { c ->
                             val col = Color(c)
                             val selected = colorToHex(col) == colorToHex(current)
                             Box(
                                 Modifier
-                                    .size(40.dp)
+                                    .size(30.dp)
                                     .background(col, CircleShape)
                                     .border(
-                                        if (selected) 3.dp else 1.dp,
+                                        if (selected) 2.5.dp else 1.dp,
                                         if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant,
                                         CircleShape
                                     )
-                                    .clickable { hex = colorToHex(col) },
+                                    .clickable {
+                                        val arr = FloatArray(3)
+                                        android.graphics.Color.colorToHSV(
+                                            android.graphics.Color.argb(255, (col.red * 255).toInt(), (col.green * 255).toInt(), (col.blue * 255).toInt()), arr
+                                        )
+                                        hue = arr[0]; sat = arr[1]; value = arr[2]
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (selected) Icon(
                                     Icons.Filled.Check, null,
-                                    tint = Color.White, modifier = Modifier.size(18.dp)
+                                    tint = Color.White, modifier = Modifier.size(14.dp)
                                 )
                             }
                         }
                     }
                 }
+
+                Spacer(Modifier.height(10.dp))
+
+                // 饱和度/明度面板（全色区域）
+                var panelSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(140.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .androidx_svPanel(hueColor)
+                        .onSizeChanged { panelSize = it }
+                        .pointerInput(Unit) {
+                            detectTapGestures { pos ->
+                                if (panelSize.width > 0) {
+                                    sat = (pos.x / panelSize.width).coerceIn(0f, 1f)
+                                    value = 1f - (pos.y / panelSize.height).coerceIn(0f, 1f)
+                                }
+                            }
+                        }
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, _ ->
+                                change.consume()
+                                if (panelSize.width > 0) {
+                                    sat = (change.position.x / panelSize.width).coerceIn(0f, 1f)
+                                    value = 1f - (change.position.y / panelSize.height).coerceIn(0f, 1f)
+                                }
+                            }
+                        }
+                ) {
+                    // 选择点
+                    Box(
+                        Modifier
+                            .offset { IntOffset((sat * panelSize.width).roundToInt() - 9, ((1f - value) * panelSize.height).roundToInt() - 9) }
+                            .size(18.dp)
+                            .border(2.5.dp, Color.White, CircleShape)
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // 色相条
+                var hueBarSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(24.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .androidx_hueBar()
+                        .onSizeChanged { hueBarSize = it }
+                        .pointerInput(Unit) {
+                            detectTapGestures { pos ->
+                                if (hueBarSize.width > 0) hue = (pos.x / hueBarSize.width * 360f).coerceIn(0f, 359.9f)
+                            }
+                        }
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, _ ->
+                                change.consume()
+                                if (hueBarSize.width > 0) hue = (change.position.x / hueBarSize.width * 360f).coerceIn(0f, 359.9f)
+                            }
+                        }
+                ) {
+                    Box(
+                        Modifier
+                            .offset { IntOffset((hue / 360f * hueBarSize.width).roundToInt() - 9, 0) }
+                            .size(width = 18.dp, height = 24.dp)
+                            .border(2.5.dp, Color.White, RoundedCornerShape(6.dp))
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                // 当前颜色预览
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(34.dp).background(current, CircleShape)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "#%06X".format(android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, value)) and 0xFFFFFF),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
                 Spacer(Modifier.height(12.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onDismiss) { Text("取消") }
@@ -623,10 +744,31 @@ fun ColorPickerDialog(
     }
 }
 
+/** HSV 面板背景：横向 白→纯色，纵向 透明→黑 */
+private fun Modifier.androidx_svPanel(hueColor: Color): Modifier =
+    this.drawBehind {
+        drawRect(brush = Brush.horizontalGradient(listOf(Color.White, hueColor)))
+        drawRect(brush = Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
+    }
+
+/** 色相条背景：红→黄→绿→青→蓝→品红→红 */
+private fun Modifier.androidx_hueBar(): Modifier =
+    this.drawBehind {
+        drawRect(
+            brush = Brush.horizontalGradient(
+                listOf(
+                    Color(0xFFFF0000), Color(0xFFFFFF00), Color(0xFF00FF00),
+                    Color(0xFF00FFFF), Color(0xFF0000FF), Color(0xFFFF00FF), Color(0xFFFF0000)
+                )
+            )
+        )
+    }
+
 /**
  * 左滑露出「编辑 / 删除」图标动作；滑过一半吸附打开，否则弹回。
- * 动作区随滑动进度淡入（关闭时完全隐藏，拖动排序等场景不会露出来），
- * 并按内容圆角裁剪，右侧不会突出直角。locked=true 时禁用左滑并弹回（拖动排序中用）。
+ * 动作区固定 116dp 靠右：右侧圆角与卡片一致，左侧两个凹角（内圆角）与卡片的圆角衔接，
+ * 滑开后看起来像一张连续的卡片；动作随滑动进度淡入（关闭时完全隐藏）。
+ * locked=true 时冻结左滑并弹回（如拖动排序中）；锁定切换不重建手势，避免打断拖动。
  */
 @Composable
 fun SwipeReveal(
@@ -638,8 +780,10 @@ fun SwipeReveal(
     content: @Composable () -> Unit,
 ) {
     val maxSwipePx = with(androidx.compose.ui.platform.LocalDensity.current) { 116.dp.toPx() }
+    val cornerPx = with(androidx.compose.ui.platform.LocalDensity.current) { cornerDp.dp.toPx() }
     val offsetX = remember { androidx.compose.animation.core.Animatable(0f) }
     val scope = rememberCoroutineScope()
+    val currentLocked by androidx.compose.runtime.rememberUpdatedState(locked)
 
     // 锁定（如正在拖动排序）时弹回
     androidx.compose.runtime.LaunchedEffect(locked) {
@@ -647,13 +791,16 @@ fun SwipeReveal(
     }
 
     Box(modifier.fillMaxWidth()) {
-        // 动作层：整体按滑动进度淡入（绘制期求值，动画流畅），右侧圆角与卡片一致
+        // 动作层：固定 116dp 靠右，整体按滑动进度淡入（绘制期求值），
+        // 形状 = 左侧凹角 + 右侧圆角，与卡片完全衔接
+        val actionShape = remember(cornerPx) { SwipeActionsShape(cornerPx) }
         Row(
             Modifier
-                .matchParentSize()
+                .align(Alignment.CenterEnd)
+                .width(116.dp)
+                .fillMaxHeight()
                 .androidx_graphicsAlpha { ((-offsetX.value) / (maxSwipePx / 4f)).coerceIn(0f, 1f) }
-                .androidx_clipEnd(cornerDp),
-            horizontalArrangement = Arrangement.End,
+                .clip(actionShape),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -687,7 +834,7 @@ fun SwipeReveal(
         Box(
             Modifier
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
-                .then(if (locked) Modifier else Modifier.pointerInput(Unit) {
+                .pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onDragEnd = {
                             scope.launch {
@@ -700,12 +847,13 @@ fun SwipeReveal(
                         },
                         onHorizontalDrag = { change, fl ->
                             change.consume()
+                            if (currentLocked) return@detectHorizontalDragGestures
                             scope.launch {
                                 offsetX.snapTo((offsetX.value + fl).coerceIn(-maxSwipePx, 0f))
                             }
                         }
                     )
-                })
+                }
         ) { content() }
     }
 }
@@ -716,8 +864,36 @@ private fun Modifier.androidx_graphicsAlpha(alpha: () -> Float): Modifier =
         Modifier.graphicsLayer { this.alpha = alpha() }
     )
 
-/** 动作层右侧圆角裁剪，与内容卡片圆角一致 */
-private fun Modifier.androidx_clipEnd(cornerDp: Int): Modifier =
-    this.then(
-        Modifier.clip(RoundedCornerShape(topEnd = cornerDp.dp, bottomEnd = cornerDp.dp))
-    )
+/**
+ * 左滑动作区形状：左侧上下两个凹角（内圆角，半径 r），右侧两个圆角（同 r）。
+ * 用于与内容卡片的圆角无缝衔接。
+ */
+private class SwipeActionsShape(private val cornerPx: Float) : androidx.compose.ui.graphics.Shape {
+    override fun createOutline(
+        size: androidx.compose.ui.geometry.Size,
+        layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+        density: androidx.compose.ui.unit.Density,
+    ): androidx.compose.ui.graphics.Outline {
+        val w = size.width
+        val h = size.height
+        val r = cornerPx.coerceAtMost(w / 2f).coerceAtMost(h / 2f)
+        val path = androidx.compose.ui.graphics.Path()
+        // 顶边
+        path.moveTo(r, 0f)
+        path.lineTo(w - r, 0f)
+        path.arcTo(androidx.compose.ui.geometry.Rect(w - 2 * r, 0f, w, 2 * r), -90f, 90f, false)
+        // 右边
+        path.lineTo(w, h - r)
+        path.arcTo(androidx.compose.ui.geometry.Rect(w - 2 * r, h - 2 * r, w, h), 0f, 90f, false)
+        // 底边（到左下凹角）
+        path.lineTo(r, h)
+        // 左下凹角：圆心 (0, h-r)，从 (r, h) 逆时针转到 (0, h-r)
+        path.arcTo(androidx.compose.ui.geometry.Rect(-r, h - 2 * r, r, h), 0f, -90f, false)
+        // 左边（向上到左上凹角）
+        path.lineTo(0f, r)
+        // 左上凹角：圆心 (0,0)，从 (0, r) 逆时针转到 (r, 0)
+        path.arcTo(androidx.compose.ui.geometry.Rect(-r, -r, r, r), 90f, -90f, false)
+        path.close()
+        return androidx.compose.ui.graphics.Outline.Generic(path)
+    }
+}

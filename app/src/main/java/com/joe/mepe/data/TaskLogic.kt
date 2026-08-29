@@ -126,12 +126,30 @@ object TaskLogic {
         }
     }
 
-    /** 量化任务：手动加/减进度 */
+    /** 量化任务：手动加/减进度（到达目标自动标记完成；退回则取消完成） */
     fun adjustQuantitative(t: TaskItem, delta: Double) {
-        val cur = t.quantitativeCurrent ?: t.quantitativeStart ?: 0.0
-        t.quantitativeCurrent = (cur + delta).coerceAtLeast(t.quantitativeStart ?: 0.0)
+        val start = t.quantitativeStart ?: 0.0
+        val cur = t.quantitativeCurrent ?: start
+        t.quantitativeCurrent = (cur + delta).coerceAtLeast(start)
+        val target = t.quantitativeTarget
+        if (target != null && target > 0) {
+            if (t.quantitativeCurrent!! >= target) {
+                if (!t.isCompleted) {
+                    t.isCompleted = true
+                    t.completedAt = LocalDateTime.now()
+                    t.lastCompletedDate = LocalDateTime.now()
+                }
+            } else if (t.isCompleted) {
+                t.isCompleted = false
+                t.completedAt = null
+                t.lastCompletedDate = null
+            }
+        }
         Repos.updateTask(t)
     }
+
+    /** 量化任务点击打卡圈的步长（每日最低量，默认 1） */
+    fun quantStep(t: TaskItem): Double = t.quantitativeDailyMin?.takeIf { it > 0 } ?: 1.0
 
     /** 目标进度（量化目标按数值，否则按子任务完成度） */
     fun goalProgress(g: Goal, allTasks: List<TaskItem>, date: LocalDate): Double {

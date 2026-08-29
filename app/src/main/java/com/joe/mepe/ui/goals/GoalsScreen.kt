@@ -3,6 +3,7 @@ package com.joe.mepe.ui.goals
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -54,6 +56,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -89,6 +95,67 @@ import kotlin.math.roundToLong
 
 private val frameNames = listOf("短期目标", "长期目标", "灵感目标")
 
+/** 目标页一次读取的数据包 */
+private data class GoalsData(
+    val goals: List<Goal>,
+    val tags: List<GoalTag>,
+    val tasks: List<com.joe.mepe.data.TaskItem>,
+    val timeTags: List<com.joe.mepe.data.TimeTag>,
+)
+
+/** 长按拖动手势 + 拖动视觉（抬起、微放大）+ 落点淡蓝虚影 */
+@Composable
+private fun DragLift(
+    itemKey: String,
+    draggingKey: String?,
+    dragOffset: Float,
+    dropTargetKey: String?,
+    onStartDrag: (String) -> Unit,
+    onDrag: (Float) -> Unit,
+    onEndDrag: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val dragging = draggingKey == itemKey
+    val isDropTarget = dropTargetKey == itemKey && draggingKey != null && !dragging
+    Column(
+        Modifier
+            .androidx_goalGraphics(dragging, dragOffset)
+            .pointerInput(itemKey) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { onStartDrag(itemKey) },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        onDrag(dragAmount.y)
+                    },
+                    onDragEnd = { onEndDrag() },
+                    onDragCancel = { onEndDrag() }
+                )
+            }
+    ) {
+        Box {
+            content()
+            if (isDropTarget) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f), RoundedCornerShape(14.dp))
+                        .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.65f), RoundedCornerShape(14.dp))
+                )
+            }
+        }
+    }
+}
+
+private fun Modifier.androidx_goalGraphics(dragging: Boolean, dragOffset: Float): Modifier =
+    this.then(
+        Modifier.graphicsLayer {
+            translationY = if (dragging) dragOffset else 0f
+            scaleX = if (dragging) 1.02f else 1f
+            scaleY = if (dragging) 1.02f else 1f
+            shadowElevation = if (dragging) 24f else 0f
+        }
+    )
+
 /** 目标展示色：优先自定义 ColorHex，其次枚举 */
 fun goalDisplayColor(g: Goal, fallback: Color): Color =
     if (!g.colorHex.isNullOrBlank()) parseHexColor(g.colorHex, fallback)
@@ -108,10 +175,60 @@ fun GoalsScreen(nav: (String) -> Unit) {
 
     val rev = DataBus.rev
     val data = remember(selectedTagId, rev) {
-        Triple(Repos.goals(), Repos.tags(), Repos.tasks())
+        GoalsData(Repos.goals(), Repos.tags(), Repos.tasks(), Repos.timeTags())
     }
-    val (goals, tags, tasks) = data
+    val (goals, tags, tasks, timeTags) = data
     val today = LocalDate.now()
+
+    // ---- 长按拖动排序状态（同时间框架内的顶级目标） ----
+    val listState = rememberLazyListState()
+    var draggingGoalKey by remember { mutableStateOf<String?>(null) }
+    var goalDragOffset by remember { mutableStateOf(0f) }
+    var goalDropTargetKey by remember { mutableStateOf<String?>(null) }
+    val goalRowGroups = remember { mutableMapOf<String, Pair<Int, Int>>() } // key -> (timeFrame, 目标id)
+    val haptic = LocalHapticFeedback.current
+
+    /** 把 draggedId 移到 targetId 前/后（同框架内顶级目标），按 sortOrder 持久化 */
+    fun moveGoalTo(draggedId: Int, targetId: Int, down: Boolean) {
+        val all = Repos.goals(includeDeleted = true)
+        val dragged = all.find { it.id == draggedId } ?: return
+        val roots = all.filter { it.timeFrame == dragged.timeFrame && it.parentId == null && !it.isDeleted }
+            .sortedBy { it.sortOrder }.toMutableList()
+        val di = roots.indexOfFirst { it.id == draggedId }
+        val ti = roots.indexOfFirst { it.id == targetId }
+        if (di < 0 || ti < 0) return
+        val item = roots.removeAt(di)
+        val insertAt = (roots.indexOfFirst { it.id == targetId } + if (down) 1 else 0).coerceIn(0, roots.size)
+        roots.add(insertAt, item)
+        roots.forEachIndexed { idx, g -> g.sortOrder = idx; g.updatedAt = java.time.LocalDateTime.now() }
+        Repos.saveGoals(all.map { g -> roots.find { it.id == g.id } ?: g })
+    }
+
+    /** 拖动经过相邻目标时换位；goalDropTargetKey 显示预计落点 */
+    fun processGoalDrag() {
+        val key = draggingGoalKey ?: return
+        val frame = goalRowGroups[key]?.first ?: return
+        val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: return
+        val draggedCenter = info.offset + goalDragOffset + info.size / 2f
+        val candidates = listState.layoutInfo.visibleItemsInfo
+            .filter { it.key != key && goalRowGroups[it.key]?.first == frame }
+        val target = candidates
+            .filter {
+                val c = it.offset + it.size / 2f
+                if (goalDragOffset > 0) c < draggedCenter else c > draggedCenter
+            }
+            .maxByOrNull { if (goalDragOffset > 0) it.offset + it.size / 2f else -(it.offset + it.size / 2f) }
+        goalDropTargetKey = target?.key as? String
+        val t = target ?: return
+        val tCenter = t.offset + t.size / 2f
+        val crossed = if (goalDragOffset > 0) draggedCenter > tCenter else draggedCenter < tCenter
+        if (crossed) {
+            val targetId = goalRowGroups[t.key]?.second ?: return
+            val draggedId = goalRowGroups[key]?.second ?: return
+            moveGoalTo(draggedId, targetId, down = goalDragOffset > 0)
+            goalDragOffset += if (goalDragOffset > 0) -t.size.toFloat() else t.size.toFloat()
+        }
+    }
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(
@@ -145,9 +262,9 @@ fun GoalsScreen(nav: (String) -> Unit) {
 
         val visible = goals.filter { g ->
             g.parentId == null && (selectedTagId == null || g.tagId == selectedTagId)
-        }
+        }.sortedBy { it.sortOrder }
 
-        LazyColumn(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState) {
             if (visible.isEmpty()) {
                 item { EmptyHint("还没有目标，点右下角新建", Icons.Filled.Flag) }
             }
@@ -164,17 +281,29 @@ fun GoalsScreen(nav: (String) -> Unit) {
                         )
                     }
                     items(inFrame, key = { "g${it.id}" }) { g ->
-                        GoalNode(
-                            goal = g, goals = goals, tags = tags, tasks = tasks, today = today,
-                            depth = 0, expandedIds = expandedIds,
-                            onToggleExpand = { id ->
-                                expandedIds = if (id in expandedIds) expandedIds - id else expandedIds + id
+                        goalRowGroups["g${g.id}"] = frame to g.id
+                        DragLift(
+                            itemKey = "g${g.id}",
+                            draggingKey = draggingGoalKey, dragOffset = goalDragOffset, dropTargetKey = goalDropTargetKey,
+                            onStartDrag = {
+                                draggingGoalKey = it; goalDragOffset = 0f
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             },
-                            onEdit = { editing = it },
-                            onDelete = { deleteTarget = it },
-                            onAddSub = { editingParentForSub = it },
-                            onQuant = { quantGoal = it },
-                        )
+                            onDrag = { dy -> goalDragOffset += dy; processGoalDrag() },
+                            onEndDrag = { draggingGoalKey = null; goalDragOffset = 0f; goalDropTargetKey = null },
+                        ) {
+                            GoalNode(
+                                goal = g, goals = goals, tags = tags, tasks = tasks, timeTags = timeTags, today = today,
+                                depth = 0, expandedIds = expandedIds,
+                                onToggleExpand = { id ->
+                                    expandedIds = if (id in expandedIds) expandedIds - id else expandedIds + id
+                                },
+                                onEdit = { editing = it },
+                                onDelete = { deleteTarget = it },
+                                onAddSub = { editingParentForSub = it },
+                                onQuant = { quantGoal = it },
+                            )
+                        }
                     }
                 }
             }
@@ -240,6 +369,7 @@ private fun GoalNode(
     goals: List<Goal>,
     tags: List<GoalTag>,
     tasks: List<com.joe.mepe.data.TaskItem>,
+    timeTags: List<com.joe.mepe.data.TimeTag>,
     today: LocalDate,
     depth: Int,
     expandedIds: Set<Int>,
@@ -254,6 +384,7 @@ private fun GoalNode(
     val progress = TaskLogic.goalProgress(goal, tasks, today)
     val color = goalDisplayColor(goal, MaterialTheme.colorScheme.primary)
     val tag = goal.tagId?.let { tid -> tags.find { it.id == tid } }
+    val boundTimeTag = goal.timeTagId?.let { id -> timeTags.find { it.id == id } }
     val expanded = goal.id !in expandedIds // 默认展开，点按折叠
 
     Column(Modifier.padding(horizontal = if (depth == 0) 12.dp else 0.dp, vertical = 4.dp)) {
@@ -289,6 +420,7 @@ private fun GoalNode(
                         val meta = buildString {
                             if (children.isNotEmpty()) append("子目标 ${children.size} · ")
                             if (subTasks.isNotEmpty()) append("任务 ${subTasks.size} · ")
+                            if (boundTimeTag != null) append("⏱ ${boundTimeTag.name} · ")
                             goal.endDate?.let { append("截止 ${it.toLocalDate()} · ") }
                             if (goal.quantitativeTarget != null && goal.quantitativeTarget!! > 0)
                                 append("量化 ${(goal.quantitativeCurrent ?: 0.0)}/${goal.quantitativeTarget}${goal.quantitativeUnit?.let { " $it" } ?: ""}")
@@ -613,6 +745,7 @@ fun GoalEditDialog(initial: Goal?, parentId: Int? = null, onClose: () -> Unit) {
     var colorIdx by remember { mutableStateOf(initial?.color ?: GoalColors.BLUE) }
     var colorHex by remember { mutableStateOf(initial?.colorHex) }
     var tagId by remember { mutableStateOf(initial?.tagId) }
+    var goalTimeTagId by remember { mutableStateOf(initial?.timeTagId) }
     var parentGoalId by remember { mutableStateOf(initial?.parentId ?: parentId) }
     var startDate by remember { mutableStateOf(initial?.startDate?.toLocalDate()) }
     var endDate by remember { mutableStateOf(initial?.endDate?.toLocalDate()) }
@@ -624,6 +757,7 @@ fun GoalEditDialog(initial: Goal?, parentId: Int? = null, onClose: () -> Unit) {
     var showColorPicker by remember { mutableStateOf(false) }
 
     val tags = rememberData { Repos.tags().toList() }
+    val timeTags = rememberData { Repos.timeTags().toList() }
     val parentChoices = rememberData { Repos.goals().filter { it.parentId == null } }
 
     androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
@@ -689,6 +823,17 @@ fun GoalEditDialog(initial: Goal?, parentId: Int? = null, onClose: () -> Unit) {
                         }
                     }
                 }
+                // 绑定时间标签（该目标下的任务默认继承）
+                Text("绑定时间标签（任务默认继承）", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                LazyRow(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    item { TagChip("无", null, goalTimeTagId == null) { goalTimeTagId = null } }
+                    items(timeTags, key = { it.id }) { t ->
+                        TagChip(t.name, t.color, goalTimeTagId == t.id) {
+                            goalTimeTagId = if (goalTimeTagId == t.id) null else t.id
+                        }
+                    }
+                }
                 // 父目标
                 if (parentChoices.isNotEmpty() && parentChoices.any { it.id != initial?.id }) {
                     Text("父目标（可空）", style = MaterialTheme.typography.titleSmall)
@@ -738,6 +883,7 @@ fun GoalEditDialog(initial: Goal?, parentId: Int? = null, onClose: () -> Unit) {
                                 this.color = colorIdx
                                 this.colorHex = colorHex
                                 this.tagId = tagId
+                                this.timeTagId = goalTimeTagId
                                 this.parentId = parentGoalId
                                 this.startDate = startDate?.atStartOfDay()
                                 this.endDate = endDate?.atTime(23, 59)

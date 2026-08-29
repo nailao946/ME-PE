@@ -4,10 +4,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,7 +20,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Pause
@@ -44,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -190,11 +196,11 @@ fun fmtMinutes(min: Long): String = if (min >= 60) "${min / 60}小时${min % 60}
 // ============ 页面 ============
 
 /** 时间页：运行中计时条 + 番茄钟 + 标签一键计时（带颜色） + 今日记录 + 分布图，整体可滚动 */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TimeTrackScreen(nav: (String) -> Unit) {
     var tick by remember { mutableIntStateOf(0) }
-    var editingTag by remember { mutableStateOf<TimeTag?>(null) }
-    var addingTag by remember { mutableStateOf(false) }
+    var showTagManager by remember { mutableStateOf(false) }
     var showPomoSettings by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -287,25 +293,30 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
                 }
             }
 
-            // 时间标签（在番茄钟上方）
+            // 时间标签（按钮组：点一下开始/停止计时）
             item(key = "sec_tags") {
-                SectionLabelRow("标签计时", "点击开始计时") {
-                    TextButton(onClick = { addingTag = true }) { Text("＋ 新标签") }
+                SectionLabelRow("标签计时", "点标签开始/停止计时") {
+                    TextButton(onClick = { showTagManager = true }) { Text("标签管理") }
                 }
             }
-            if (tags.isEmpty()) {
-                item(key = "no_tags") { EmptyHint("暂无标签，点右上角添加", Icons.Filled.Timer) }
-            }
-            items(tags.size, key = { "tag${tags[it].id}" }) { i ->
-                val t = tags[i]
-                val isRunning = running?.tagId == t.id
-                val mins = todayRecords.filter { it.tagId == t.id }.sumOf { it.minutes() }
-                TagRow(
-                    tag = t, isRunning = isRunning, todayMinutes = mins,
-                    onToggle = { if (isRunning) endTimer(t.id) else beginTimer(t.id) },
-                    onEdit = { editingTag = t },
-                    onDelete = { Repos.deleteTimeTag(t.id) },
-                )
+            item(key = "tag_chips") {
+                if (tags.isEmpty()) {
+                    EmptyHint("暂无标签，点「标签管理」添加", Icons.Filled.Timer)
+                } else {
+                    FlowRow(
+                        Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        tags.forEach { t ->
+                            val isRunning = running?.tagId == t.id
+                            val mins = todayRecords.filter { it.tagId == t.id }.sumOf { it.minutes() }
+                            TimeTagChip(t, isRunning, mins) {
+                                if (isRunning) endTimer(t.id) else beginTimer(t.id)
+                            }
+                        }
+                    }
+                }
             }
 
             // 番茄钟
@@ -347,8 +358,8 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
         }
     }
 
-    if (addingTag || editingTag != null) {
-        TimeTagEditDialog(initial = editingTag, onClose = { addingTag = false; editingTag = null })
+    if (showTagManager) {
+        TimeTagManagerDialog(onClose = { showTagManager = false })
     }
     if (showPomoSettings) PomodoroSettingsDialog(onClose = { showPomoSettings = false })
 }
@@ -451,48 +462,96 @@ private fun PomodoroCard(onOpenSettings: () -> Unit) {
     }
 }
 
-/** 单个时间标签行 */
+/** 时间标签按钮（点=开始/停止计时；运行中高亮实底） */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TagRow(
-    tag: TimeTag,
-    isRunning: Boolean,
-    todayMinutes: Long,
-    onToggle: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
-) {
+private fun TimeTagChip(tag: TimeTag, isRunning: Boolean, todayMinutes: Long, onClick: () -> Unit) {
     val color = parseHexColor(tag.color, MaterialTheme.colorScheme.primary)
-    SectionCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            ColorDot(color, sizeDp = 14)
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(tag.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                Text(
-                    "今日 ${fmtMinutes(todayMinutes)}" + if (tag.isPreset) " · 预置" else "",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+    val content = if (isRunning) Color.White else color
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(if (isRunning) color else color.copy(alpha = 0.13f))
+            .border(1.5.dp, if (isRunning) color else color.copy(alpha = 0.55f), RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            if (isRunning) Icons.Filled.Stop else Icons.Filled.PlayArrow, null,
+            tint = content, modifier = Modifier.size(14.dp)
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            tag.name, color = content,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (isRunning) FontWeight.Bold else FontWeight.Medium
+        )
+        if (todayMinutes > 0) {
+            Spacer(Modifier.width(6.dp))
             Text(
-                "编辑", Modifier.clickable(onClick = onEdit).padding(horizontal = 6.dp),
-                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary
+                fmtMinutes(todayMinutes),
+                color = content.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall
             )
-            Text(
-                "删除", Modifier.clickable(onClick = onDelete).padding(horizontal = 6.dp),
-                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error
-            )
-            Spacer(Modifier.width(4.dp))
-            Button(
-                onClick = onToggle,
-                shape = MaterialTheme.shapes.small,
-                colors = if (isRunning) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                else ButtonDefaults.buttonColors()
-            ) {
-                Icon(if (isRunning) Icons.Filled.Stop else Icons.Filled.PlayArrow, null, Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text(if (isRunning) "停止" else "计时")
+        }
+    }
+}
+
+/** 时间标签管理：列表（编辑/删除）+ 新增，编辑弹窗用全色调色盘选色 */
+@Composable
+private fun TimeTagManagerDialog(onClose: () -> Unit) {
+    val rev = DataBus.rev
+    val tags = remember(rev) { Repos.timeTags() }
+    var editingTag by remember { mutableStateOf<TimeTag?>(null) }
+    var adding by remember { mutableStateOf(false) }
+    var deleteTag by remember { mutableStateOf<TimeTag?>(null) }
+
+    Dialog(onDismissRequest = onClose) {
+        Card(shape = MaterialTheme.shapes.large) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Timer, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("时间标签管理", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.height(10.dp))
+                if (tags.isEmpty()) EmptyHint("暂无标签")
+                LazyColumn(Modifier.height(320.dp)) {
+                    items(tags, key = { it.id }) { tag ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            ColorDot(parseHexColor(tag.color, MaterialTheme.colorScheme.primary), sizeDp = 14)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(tag.name, style = MaterialTheme.typography.bodyLarge)
+                                if (tag.isPreset)
+                                    Text("预置", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            TextButton(onClick = { editingTag = tag }) { Text("编辑") }
+                            if (!tag.isPreset)
+                                TextButton(onClick = { deleteTag = tag }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = { adding = true }) { Text("＋ 新标签") }
+                    TextButton(onClick = onClose) { Text("完成") }
+                }
             }
         }
+    }
+
+    if (adding || editingTag != null) {
+        TimeTagEditDialog(initial = editingTag, onClose = { adding = false; editingTag = null })
+    }
+    deleteTag?.let { t ->
+        com.joe.mepe.ui.ConfirmDialog("删除标签", "确定删除「${t.name}」吗？（已有的计时记录会保留）", {
+            Repos.deleteTimeTag(t.id)
+            deleteTag = null
+        }, { deleteTag = null })
     }
 }
 

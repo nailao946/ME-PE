@@ -105,7 +105,11 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
                         GoalChip("无目标", goalId == null, null) { goalId = null }
                     }
                     items(goals.filter { it.parentId == null }, key = { it.id }) { g ->
-                        GoalChip(g.name, goalId == g.id, null) { goalId = g.id }
+                        GoalChip(g.name, goalId == g.id, null) {
+                            goalId = g.id
+                            // 目标绑定了时间标签 → 任务默认继承该标签
+                            if (g.timeTagId != null) timeTagId = g.timeTagId
+                        }
                     }
                 }
                 Spacer(Modifier.height(10.dp))
