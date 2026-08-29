@@ -742,26 +742,52 @@ private fun TaskDetailSheet(
 
             Spacer(Modifier.height(12.dp))
 
-            // 打卡统计：仅习惯型任务有意义（按"应打卡日"计算，不会超过 100%）
+            // 统计（按任务类型展示）：习惯型=打卡率，量化=进度/剩余，一次性=状态/完成时间
             val isHabit = task.type == TaskTypes.PERIODIC || task.type == TaskTypes.RECURRING
-            if (isHabit) {
-                val days30 = (29 downTo 0).map { date.minusDays(it.toLong()) }
-                val dueDays = days30.filter { TaskLogic.occursOnDate(task, it) }
-                if (dueDays.isNotEmpty()) {
-                    val done30 = dueDays.count { TaskLogic.isDoneOn(task, it, completions) }
-                    var streak = 0
-                    run {
-                        var d = date
-                        var guard = 0
-                        while (guard++ < 400 && dueDays.contains(d) && TaskLogic.isDoneOn(task, d, completions)) {
-                            streak++
-                            d = d.minusDays(1)
+            when {
+                isHabit -> {
+                    val days30 = (29 downTo 0).map { date.minusDays(it.toLong()) }
+                    val dueDays = days30.filter { TaskLogic.occursOnDate(task, it) }
+                    if (dueDays.isNotEmpty()) {
+                        val done30 = dueDays.count { TaskLogic.isDoneOn(task, it, completions) }
+                        var streak = 0
+                        run {
+                            var d = date
+                            var guard = 0
+                            while (guard++ < 400 && dueDays.contains(d) && TaskLogic.isDoneOn(task, d, completions)) {
+                                streak++
+                                d = d.minusDays(1)
+                            }
                         }
+                        com.joe.mepe.ui.StatRow(listOf(
+                            Triple("近30天完成", "$done30/${dueDays.size} 天", null),
+                            Triple("打卡率", "${done30 * 100 / dueDays.size}%", null),
+                            Triple("连续打卡", "$streak 天", null),
+                        ))
+                        Spacer(Modifier.height(10.dp))
                     }
+                }
+                task.type == TaskTypes.QUANTITATIVE && task.quantitativeTarget != null && task.quantitativeTarget!! > 0 -> {
+                    val qStart = task.quantitativeStart ?: 0.0
+                    val qTarget = task.quantitativeTarget!!
+                    val qCur = (task.quantitativeCurrent ?: qStart)
+                    val qUnit = task.quantitativeUnit ?: ""
+                    val pct = if (qTarget > qStart) (((qCur - qStart) / (qTarget - qStart)) * 100).toInt().coerceIn(0, 100) else 0
+                    val remain = (qTarget - qCur).coerceAtLeast(0.0)
+                    val left = if (qTarget > qStart) qCur - qStart else 0.0
                     com.joe.mepe.ui.StatRow(listOf(
-                        Triple("近30天完成", "$done30/${dueDays.size} 天", null),
-                        Triple("打卡率", "${done30 * 100 / dueDays.size}%", null),
-                        Triple("连续打卡", "$streak 天", null),
+                        Triple("当前进度", "${fmtNum(qCur)}/${fmtNum(qTarget)}${if (qUnit.isNotBlank()) " $qUnit" else ""}", null),
+                        Triple("完成度", "$pct%", null),
+                        Triple("剩余", "${fmtNum(remain)}${if (qUnit.isNotBlank()) " $qUnit" else ""}", null),
+                    ))
+                    Spacer(Modifier.height(10.dp))
+                }
+                task.type == TaskTypes.ONE_TIME -> {
+                    val doneDate = task.completedAt?.toLocalDate()?.toString()
+                    com.joe.mepe.ui.StatRow(listOf(
+                        Triple("状态", if (done) "已完成 ✓" else "进行中", null),
+                        Triple("完成于", doneDate ?: "—", null),
+                        Triple("截止", task.endDate?.toLocalDate()?.toString() ?: "不限", null),
                     ))
                     Spacer(Modifier.height(10.dp))
                 }
