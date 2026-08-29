@@ -42,6 +42,7 @@ import com.joe.mepe.ui.OptionItem
 import com.joe.mepe.ui.OptionPickerDialog
 import com.joe.mepe.ui.SelectorField
 import com.joe.mepe.ui.Segmented
+import com.joe.mepe.ui.WheelPicker
 import java.time.LocalDate
 import java.time.LocalDateTime
 
@@ -158,21 +159,37 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
                         Spacer(Modifier.height(8.dp))
                         when (pattern) {
                             RecPatterns.WEEKLY -> {
-                                val names = listOf("一", "二", "三", "四", "五", "六", "日")
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    names.forEachIndexed { i, n ->
-                                        val d = i + 1
-                                        val on = d in weekDays
-                                        OutlinedButton(onClick = {
-                                            weekDays = if (on) weekDays - d else weekDays + d
-                                        }) {
-                                            Text(n, color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (weekDays.size > 1) {
+                                    // 老数据勾了多个星期几：保留芯片多选，改用滚轮会丢数据
+                                    val names = listOf("一", "二", "三", "四", "五", "六", "日")
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        names.forEachIndexed { i, n ->
+                                            val d = i + 1
+                                            val on = d in weekDays
+                                            OutlinedButton(onClick = {
+                                                weekDays = if (on) weekDays - d else weekDays + d
+                                            }) {
+                                                Text(n, color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
                                         }
                                     }
+                                } else {
+                                    Text("选周几（滚动到中间即选中）", style = MaterialTheme.typography.titleSmall)
+                                    Spacer(Modifier.height(2.dp))
+                                    WheelPicker(
+                                        items = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日"),
+                                        selectedIndex = (weekDays.firstOrNull() ?: 1) - 1
+                                    ) { i -> weekDays = setOf(i + 1) }
                                 }
                             }
                             RecPatterns.MONTHLY -> {
-                                NumberField("每月几号（1-31）", dayOfMonth, { dayOfMonth = it })
+                                Text("每月几号（滚动到中间即选中）", style = MaterialTheme.typography.titleSmall)
+                                Spacer(Modifier.height(2.dp))
+                                WheelPicker(
+                                    items = (1..31).map { "$it 号" },
+                                    selectedIndex = (dayOfMonth.toIntOrNull() ?: 1).coerceIn(1, 31) - 1
+                                ) { i -> dayOfMonth = (i + 1).toString() }
+                                Spacer(Modifier.height(6.dp))
                                 CheckRow("每月最后一天", lastDay, { lastDay = it })
                             }
                             RecPatterns.INTERVAL -> NumberField("每隔几天", intervalDays, { intervalDays = it })

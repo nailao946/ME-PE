@@ -2,8 +2,11 @@ package com.joe.mepe.ui
 
 import kotlin.math.roundToInt
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
@@ -11,6 +14,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.layout.onSizeChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.input.pointer.pointerInput
@@ -36,7 +40,12 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -687,6 +696,86 @@ fun OptionPickerDialog(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
+            }
+        }
+    }
+}
+
+/**
+ * 滚轮选择器（像飞机/机械计数器）：上下滚动把目标值停到中间高亮行即选中，
+ * 点任意一行也会滚到中间。visibleCount 为同时可见的行数（奇数）。
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun WheelPicker(
+    items: List<String>,
+    selectedIndex: Int,
+    modifier: Modifier = Modifier,
+    visibleCount: Int = 3,
+    itemHeightDp: Int = 40,
+    onSelected: (Int) -> Unit,
+) {
+    if (items.isEmpty()) return
+    val itemHeight = itemHeightDp.dp
+    val listState = rememberLazyListState()
+    val flingBehavior = rememberSnapFlingBehavior(lazyListState = listState)
+    val scope = rememberCoroutineScope()
+    val last = items.lastIndex
+
+    // 中间行 = 当前选中项：取离视口中线最近的可见项
+    val centerIndex by remember(items) {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val mid = (info.viewportStartOffset + info.viewportEndOffset) / 2
+            info.visibleItemsInfo.minByOrNull { kotlin.math.abs(it.offset + it.size / 2 - mid) }?.index ?: 0
+        }
+    }
+    // 初始定位到选中项
+    LaunchedEffect(items) { listState.scrollToItem(selectedIndex.coerceIn(0, last)) }
+    // 滚动停止后回调新选中项（跳过初始值，避免打开即触发）
+    LaunchedEffect(items) {
+        snapshotFlow { centerIndex }.drop(1).collect { i -> onSelected(i.coerceIn(0, last)) }
+    }
+    // 外部值变化（如切换周期）时归位；用户正在滚则不打断
+    LaunchedEffect(selectedIndex) {
+        if (!listState.isScrollInProgress && centerIndex != selectedIndex)
+            listState.scrollToItem(selectedIndex.coerceIn(0, last))
+    }
+
+    Box(modifier.height(itemHeight * visibleCount)) {
+        // 中间高亮带
+        Box(
+            Modifier.align(Alignment.Center)
+                .fillMaxWidth()
+                .height(itemHeight)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f), RoundedCornerShape(10.dp))
+        )
+        LazyColumn(
+            state = listState,
+            flingBehavior = flingBehavior,
+            contentPadding = PaddingValues(vertical = itemHeight * (visibleCount / 2)),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            itemsIndexed(items) { i, label ->
+                val selected = i == centerIndex
+                val scale by animateFloatAsState(if (selected) 1f else 0.82f, label = "wheelScale")
+                Box(
+                    Modifier.fillMaxWidth().height(itemHeight)
+                        .clickable { scope.launch { listState.animateScrollToItem(i) } },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        label,
+                        style = if (selected) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.graphicsLayer {
+                            scaleX = scale; scaleY = scale
+                            alpha = if (selected) 1f else 0.45f
+                        }
+                    )
+                }
             }
         }
     }

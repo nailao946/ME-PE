@@ -518,7 +518,7 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
         TimeTagManagerDialog(onClose = { showTagManager = false })
     }
     if (showStatsSheet) {
-        TimeStatsSheet(onClose = { showStatsSheet = false })
+        TimeStatsSheet(onClose = { showStatsSheet = false }, viewDate = viewDate)
     }
     if (showPomoSettings) PomodoroSettingsDialog(onClose = { showPomoSettings = false })
 }
@@ -930,17 +930,19 @@ private fun TagBindRow(label: String, tagId: Int?, tags: List<TimeTag>, onClick:
 
 /**
  * 时间统计底部弹窗（从下往上浮出）：周期切换 + 总览统计 + 扇形分布 + 各标签时长 + 当日甘特时间轴 + 近14天趋势。
- * span: 0=今日 1=本周 2=本月 3=全部；统计口径与桌面端一致（排除默认标签 + 统计标签范围设置 + 运行中记录计入）。
+ * span: 0=当日 1=本周 2=本月 3=全部；统计基准日 = 时间页当前查看的日期（选了昨天，"当日"就是昨天的数据）；
+ * 统计口径与桌面端一致（排除默认标签 + 统计标签范围设置 + 运行中记录计入）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TimeStatsSheet(onClose: () -> Unit) {
+private fun TimeStatsSheet(onClose: () -> Unit, viewDate: LocalDate) {
     val rev = DataBus.rev
     var span by remember { mutableStateOf(0) }
     var detailTag by remember { mutableStateOf<TimeTag?>(null) }
     val tags = remember(rev) { Repos.timeTags() }
     val records = remember(rev) { Repos.timeRecords() }
-    val today = LocalDate.now()
+    val today = viewDate
+    val realToday = LocalDate.now()
 
     val (s, e) = when (span) {
         0 -> today to today
@@ -988,7 +990,15 @@ private fun TimeStatsSheet(onClose: () -> Unit) {
         ) {
             Text("时间统计", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
-            Segmented(listOf("今日", "本周", "本月", "全部"), span) { span = it }
+            Segmented(listOf("当日", "本周", "本月", "全部"), span) { span = it }
+            if (viewDate != realToday) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "统计基准：${viewDate.monthValue}月${viewDate.dayOfMonth}日（跟随时间页所选日期）",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Spacer(Modifier.height(12.dp))
 
             StatRow(listOf(
@@ -1035,7 +1045,7 @@ private fun TimeStatsSheet(onClose: () -> Unit) {
                 }
             }
 
-            SectionCard(title = "今日时间轴（甘特图 · 点行看明细）") {
+            SectionCard(title = if (today == realToday) "今日时间轴（甘特图 · 点行看明细）" else "${today.monthValue}月${today.dayOfMonth}日时间轴（甘特图 · 点行看明细）") {
                 DayGanttChart(todayRecords, tags) { detailTag = it }
             }
 
@@ -1065,7 +1075,7 @@ private fun DayGanttChart(records: List<TimeRecord>, tags: List<TimeTag>, onSele
     val groups = tags.map { t -> t to records.filter { it.tagId == t.id }.sortedBy { it.startTime } }
         .filter { it.second.isNotEmpty() }
     if (groups.isEmpty()) {
-        EmptyHint("今天还没有计时记录")
+        EmptyHint("这一天还没有计时记录")
         return
     }
     val grid = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
