@@ -826,8 +826,13 @@ fun SwipeReveal(
     }
 
     Box(modifier.fillMaxWidth()) {
-        // 动作层：底面延续卡片色 + 凹角衔接卡片；两枚大圆角色调按钮（图标+文字），错落滑入
+        // 动作层：编辑/删除两块渐变色板从卡片色中"浮现"，无接缝；
+        // 各自的磨砂圆钮（白 25% 圆底 + 白图标 + 小字）随滑出上升淡入，删除侧略带迟滞
         val actionShape = remember(cornerPx) { SwipeActionsShape(cornerPx) }
+        val surfaceC = MaterialTheme.colorScheme.surface
+        val primaryC = MaterialTheme.colorScheme.primary
+        val errorC = MaterialTheme.colorScheme.error
+        val revealT = { ((-offsetX.value) / maxSwipePx).coerceIn(0f, 1f) }
         Row(
             Modifier
                 .align(Alignment.CenterEnd)
@@ -835,31 +840,27 @@ fun SwipeReveal(
                 .fillMaxHeight()
                 .androidx_graphicsAlpha { ((-offsetX.value) / (maxSwipePx / 4f)).coerceIn(0f, 1f) }
                 .clip(actionShape)
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
         ) {
-            SwipeActionButton(
+            SwipeActionPanel(
                 label = "编辑",
                 icon = Icons.Filled.Edit,
-                container = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-                content = MaterialTheme.colorScheme.primary,
-                slideFrom = 26f,
-                progress = { ((-offsetX.value) / maxSwipePx).coerceIn(0f, 1f) },
+                brush = remember(surfaceC, primaryC) {
+                    Brush.horizontalGradient(0f to surfaceC, 0.45f to primaryC.copy(alpha = 0.75f), 1f to primaryC)
+                },
+                progress = revealT,
                 modifier = Modifier.weight(1f),
                 onClick = {
                     onEdit()
                     scope.launch { offsetX.animateTo(0f, tween(180)) }
                 },
             )
-            SwipeActionButton(
+            SwipeActionPanel(
                 label = "删除",
                 icon = Icons.Filled.Delete,
-                container = MaterialTheme.colorScheme.error.copy(alpha = 0.14f),
-                content = MaterialTheme.colorScheme.error,
-                slideFrom = 14f,
-                progress = { ((-offsetX.value) / maxSwipePx).coerceIn(0f, 1f) },
+                brush = remember(errorC) {
+                    Brush.horizontalGradient(0f to errorC.copy(alpha = 0.9f), 1f to errorC)
+                },
+                progress = { (revealT() - 0.18f).coerceAtLeast(0f) / 0.82f },
                 modifier = Modifier.weight(1f),
                 onClick = {
                     onDelete()
@@ -902,34 +903,44 @@ private fun Modifier.androidx_graphicsAlpha(alpha: () -> Float): Modifier =
     )
 
 /**
- * 左滑动作按钮（设计系统组件）：大圆角「色调按钮」——
- * 图标 + 文字标签、柔和语义色底（主色/错误色 14% 透明度），随滑出进度错落滑入。
+ * 左滑动作面板（设计系统组件）：渐变色板 + 磨砂圆钮。
+ * 内容（圆钮+文字）随滑出进度上升淡入（绘制期求值，不触发重组）；整块面板可点。
  */
 @Composable
-private fun SwipeActionButton(
+private fun SwipeActionPanel(
     label: String,
     icon: ImageVector,
-    container: Color,
-    content: Color,
-    slideFrom: Float,
+    brush: Brush,
     progress: () -> Float,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     Box(
         modifier
-            .fillMaxHeight(0.82f)
-            .heightIn(max = 64.dp)
-            .graphicsLayer { translationX = (1f - progress()) * slideFrom }
-            .background(container, RoundedCornerShape(16.dp))
+            .fillMaxHeight()
+            .background(brush)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, label, tint = content, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.height(2.dp))
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.graphicsLayer {
+                val t = progress()
+                alpha = t
+                translationY = (1f - t) * 12.dp.toPx()
+            }
+        ) {
+            Box(
+                Modifier
+                    .size(42.dp)
+                    .background(Color.White.copy(alpha = 0.25f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, label, tint = Color.White, modifier = Modifier.size(21.dp))
+            }
+            Spacer(Modifier.height(4.dp))
             Text(
-                label, color = content,
+                label, color = Color.White.copy(alpha = 0.95f),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold
             )

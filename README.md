@@ -201,3 +201,9 @@ app/src/main/java/com/joe/mepe/
 
 - **AI 分析支持 Anthropic**：设置 → AI 分析新增「API 格式」选择（OpenAI 兼容 / Anthropic）；Anthropic 走 `/v1/messages`（x-api-key + anthropic-version 头），可与桌面端互通的 ai_providers.json 共用（ApiFormat 0/1 约定一致）；供应商列表显示格式标签
 - **关于页新增 GitHub 链接**：安卓端（nailao946/ME-PE）与桌面端（nailao946/OKR）项目主页，点击直接跳转浏览器
+
+---
+
+## v2.4.12 更新
+
+- **左滑按钮第三版重做（渐变浮现风格）**：编辑/删除不再是色块上的按钮，而是两块**渐变色板**——编辑侧从卡片颜色渐入主题色、删除侧渐入红色，与卡片之间没有任何接缝；每侧是一枚**磨砂圆钮**（半透明白圆底 + 白图标 + 小字标签），滑开时圆钮从下方 12dp 处上升淡入、删除侧略带迟滞，有"内容从色板里浮出来"的层次感；整块面板可点，任务/目标/子任务统一生效
