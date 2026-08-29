@@ -272,7 +272,9 @@ fun GoalsScreen(nav: (String) -> Unit) {
 
         val visible = goals.filter { g ->
             g.parentId == null && (selectedTagId == null || g.tagId == selectedTagId)
-        }.sortedBy { it.sortOrder }
+        }
+        // 与桌面端同序：sortOrder 升序，创建时间新的在前
+            .sortedWith(compareBy<com.joe.mepe.data.Goal> { it.sortOrder }.thenByDescending { it.createdAt })
 
         LazyColumn(Modifier.fillMaxSize(), state = listState) {
             if (visible.isEmpty()) {
@@ -391,7 +393,9 @@ private fun GoalNode(
     onQuant: (Goal) -> Unit,
 ) {
     val children = goals.filter { it.parentId == goal.id && !it.isDeleted }
+        .sortedBy { it.createdAt } // 与桌面端一致：子目标按创建先后
     val subTasks = tasks.filter { it.goalId == goal.id && it.parentTaskId == null && !it.isDeleted }
+        .sortedWith(compareByDescending<com.joe.mepe.data.TaskItem> { it.priority }.thenBy { it.sortOrder })
     val progress = TaskLogic.goalProgress(goal, tasks, today)
     val goalColor = goalDisplayColor(goal, MaterialTheme.colorScheme.primary)
     val tag = goal.tagId?.let { tid -> tags.find { it.id == tid } }
@@ -495,6 +499,7 @@ private fun SubGoalRow(
     val progress = TaskLogic.goalProgress(goal, tasks, today)
     val done = progress >= 0.999
     val children = goals.filter { it.parentId == goal.id && !it.isDeleted }
+        .sortedBy { it.createdAt } // 与桌面端一致：子目标按创建先后
     val quant = goal.quantitativeTarget != null && goal.quantitativeTarget!! > 0
 
     Column(Modifier.padding(start = (14 + depth * 14).dp, end = 2.dp, top = 2.dp, bottom = 2.dp)) {

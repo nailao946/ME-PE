@@ -87,8 +87,9 @@ object TaskLogic {
     /** 展示用的"当日已完成" */
     fun isDoneOn(t: TaskItem, date: LocalDate, completions: List<TaskCompletionRecord>): Boolean {
         if (t.type == TaskTypes.QUANTITATIVE) {
+            // 与桌面端一致：进度达到目标即算完成（桌面端达标只置 IsCompleted，不写 LastCompletedDate）
             val target = t.quantitativeTarget ?: return false
-            return (t.quantitativeCurrent ?: 0.0) >= target && t.lastCompletedDate?.toLocalDate() == date
+            return (t.quantitativeCurrent ?: 0.0) >= target
         }
         if (t.type == TaskTypes.ONE_TIME && t.isCompleted) return true
         val need = when (t.recurringPattern) {

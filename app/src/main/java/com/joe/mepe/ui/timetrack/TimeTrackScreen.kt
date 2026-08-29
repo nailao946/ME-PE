@@ -26,7 +26,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -41,6 +43,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -60,6 +63,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,6 +101,7 @@ import com.joe.mepe.ui.ToggleRow
 import com.joe.mepe.ui.rememberData
 import com.joe.mepe.ui.theme.parseHexColor
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -260,19 +266,21 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
     val ctx = LocalContext.current
     val notifPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val today = LocalDate.now()
+    // 查看的日期（默认今天）：通过日期条切换，可查看任意一天的计时数据
+    var viewDate by rememberSaveable { mutableStateOf(LocalDate.now()) }
     val tags = remember(rev) { Repos.timeTags() }
     val running = remember(rev, tick) { Repos.runningRecord() }
     val records = remember(rev) { Repos.timeRecords() }
 
-    val todayRecords = records.filter { it.date == today.toString() }
-    // 今日总时长/分布图与桌面端一致：排除默认标签并应用统计标签范围（运行中记录计入到当前时刻）
+    val viewRecords = records.filter { it.date == viewDate.toString() }
+    // 当日总时长/分布图与桌面端一致：排除默认标签并应用统计标签范围（运行中记录计入到当前时刻）
     val statsIncludedIds = remember(rev) {
         Repos.getSetting("StatsIncludedTags", "").split(',')
             .mapNotNull { it.trim().toIntOrNull() }.filter { it > 0 }.toSet()
     }
     val statTagIds = tags.filter { !it.isDefault && (statsIncludedIds.isEmpty() || it.id in statsIncludedIds) }
         .map { it.id }.toSet()
-    val todayTotalMin = todayRecords.filter { it.tagId in statTagIds }.sumOf { it.minutes() }
+    val viewTotalMin = viewRecords.filter { it.tagId in statTagIds }.sumOf { it.minutes() }
     val runningTag = running?.let { r -> tags.find { it.id == r.tagId } }
 
     // 计时开始/停止 与 通知栏前台服务 同步
@@ -290,10 +298,10 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
     }
 
     val fallbackColor = MaterialTheme.colorScheme.primary
-    val distSlices = remember(rev) {
+    val distSlices = remember(rev, viewDate) {
         tags.filter { it.id in statTagIds }.map { t ->
             PieSlice(
-                t.name, todayRecords.filter { it.tagId == t.id }.sumOf { it.minutes() }.toDouble(),
+                t.name, viewRecords.filter { it.tagId == t.id }.sumOf { it.minutes() }.toDouble(),
                 parseHexColor(t.color, fallbackColor)
             )
         }.filter { it.value > 0 }
@@ -307,7 +315,11 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
         ScreenHeader(
             title = "时间",
             icon = Icons.Filled.Timer,
-            subtitle = if (running != null) "正在计时" else "点标签开始计时",
+            subtitle = when {
+                running != null -> "正在计时"
+                viewDate != today -> "查看 ${viewDate.monthValue}月${viewDate.dayOfMonth}日 · 点标签开始计时"
+                else -> "点标签开始计时"
+            },
             actions = {
                 IconButton(onClick = { showStatsSheet = true }, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Filled.Insights, "时间统计", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(21.dp))
@@ -317,10 +329,86 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
         )
 
         StatRow(listOf(
-            Triple("今日计时", fmtMinutes(todayTotalMin), null),
-            Triple("今日记录", "${todayRecords.size} 条", null),
+            Triple(if (viewDate == today) "今日计时" else "当日计时", fmtMinutes(viewTotalMin), null),
+            Triple(if (viewDate == today) "今日记录" else "当日记录", "${viewRecords.size} 条", null),
             Triple("番茄钟", "${PomodoroEngine.completedRounds} 轮", null),
         ))
+
+        // 滑条日历（今天前后各一年，可横滑）：查看指定某一天的计时数据
+        val dayOffsets = (-365L..365L).toList()
+        val todayIndex = 365
+        val dateListState = rememberLazyListState()
+        val dateScope = rememberCoroutineScope()
+        suspend fun centerToday(animate: Boolean) {
+            dateListState.scrollToItem(todayIndex)
+            val info = dateListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == todayIndex } ?: return
+            val viewport = dateListState.layoutInfo.viewportEndOffset - dateListState.layoutInfo.viewportStartOffset
+            val off = info.size / 2 - viewport / 2
+            if (animate) dateListState.animateScrollToItem(todayIndex, off)
+            else dateListState.scrollToItem(todayIndex, off)
+        }
+        LaunchedEffect(Unit) { centerToday(animate = false) }
+
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            LazyRow(Modifier.weight(1f).padding(vertical = 4.dp), state = dateListState) {
+                items(dayOffsets) { offset ->
+                    val d = today.plusDays(offset)
+                    val active = d == viewDate
+                    val hasRecord = records.any { it.date == d.toString() }
+                    val bg by animateColorAsState(
+                        if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        label = "dayBg"
+                    )
+                    Column(
+                        Modifier
+                            .padding(start = 12.dp, end = 4.dp)
+                            .size(54.dp)
+                            .background(bg, CircleShape)
+                            .clickable { viewDate = d },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            when {
+                                offset == 0L -> "今天"; offset == -1L -> "昨天"; offset == 1L -> "明天"
+                                d.dayOfMonth == 1 -> "${d.monthValue}月" // 每月 1 号显示月份，方便远端定位
+                                else -> listOf("一","二","三","四","五","六","日")[d.dayOfWeek.value - 1]
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (active) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "${d.dayOfMonth}",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = if (active || hasRecord) FontWeight.Bold else FontWeight.Normal,
+                            color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                        )
+                        if (hasRecord && !active) {
+                            Box(Modifier.size(4.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
+                        } else Spacer(Modifier.size(4.dp))
+                    }
+                }
+            }
+            // 回到今天：与日期圆球同尺寸同语言的圆形按钮，主题色淡底描边
+            val todayColor = MaterialTheme.colorScheme.primary
+            Column(
+                Modifier
+                    .padding(start = 8.dp, end = 12.dp)
+                    .size(54.dp)
+                    .background(todayColor.copy(alpha = 0.10f), CircleShape)
+                    .border(1.2.dp, todayColor.copy(alpha = 0.4f), CircleShape)
+                    .clickable {
+                        viewDate = LocalDate.now()
+                        dateScope.launch { centerToday(animate = true) }
+                    },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(Icons.Outlined.Today, "回到今天", tint = todayColor, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.height(2.dp))
+                Text("今天", style = MaterialTheme.typography.labelSmall, color = todayColor, fontWeight = FontWeight.Medium)
+            }
+        }
 
         LazyColumn(Modifier.fillMaxSize()) {
             // 运行中计时条
@@ -381,13 +469,18 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
             // 番茄钟
             item(key = "pomodoro") { PomodoroCard(tick = tick, onOpenSettings = { showPomoSettings = true }) }
 
-            // 今日记录
-            item(key = "sec_records") { SectionLabelRow("今日记录", null, null) }
-            if (todayRecords.isEmpty()) {
-                item(key = "no_records") { EmptyHint("今天还没有计时记录") }
+            // 当日记录（所选日期，默认今天）
+            item(key = "sec_records") {
+                SectionLabelRow(
+                    if (viewDate == today) "今日记录" else "${viewDate.monthValue}月${viewDate.dayOfMonth}日记录",
+                    null, null
+                )
             }
-            items(todayRecords.size, key = { "r${todayRecords[it].id}" }) { i ->
-                val r = todayRecords[i]
+            if (viewRecords.isEmpty()) {
+                item(key = "no_records") { EmptyHint(if (viewDate == today) "今天还没有计时记录" else "这一天没有计时记录") }
+            }
+            items(viewRecords.size, key = { "r${viewRecords[it].id}" }) { i ->
+                val r = viewRecords[i]
                 val t = tags.find { it.id == r.tagId }
                 RecordRow(r, t?.name ?: "未知", parseHexColor(t?.color, MaterialTheme.colorScheme.primary)) {
                     Repos.deleteTimeRecord(r.id)
@@ -396,9 +489,9 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
 
             // 分布图
             if (distSlices.isNotEmpty()) {
-                item(key = "sec_dist") { SectionLabelRow("今日时间分布", null, null) }
+                item(key = "sec_dist") { SectionLabelRow(if (viewDate == today) "今日时间分布" else "当日时间分布", null, null) }
                 item(key = "chart_dist") {
-                    SectionCard { DonutChart(slices = distSlices, centerText = fmtMinutes(todayTotalMin)) }
+                    SectionCard { DonutChart(slices = distSlices, centerText = fmtMinutes(viewTotalMin)) }
                 }
             }
             if (weekTotals.any { it > 0 }) {

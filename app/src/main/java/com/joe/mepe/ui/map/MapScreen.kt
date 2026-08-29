@@ -111,7 +111,7 @@ private fun MapNode(
     selected: Int?,
     onSelect: (Int?) -> Unit,
 ) {
-    val children = goals.filter { it.parentId == goal.id && !it.isDeleted }
+    val children = goals.filter { it.parentId == goal.id && !it.isDeleted }.sortedBy { it.createdAt }
     val progress = TaskLogic.goalProgress(goal, tasks, today)
     val color = com.joe.mepe.ui.goals.goalDisplayColor(goal, MaterialTheme.colorScheme.primary)
     val isSel = selected == goal.id

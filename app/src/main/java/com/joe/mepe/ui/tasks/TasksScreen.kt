@@ -215,9 +215,9 @@ fun TasksScreen(nav: (String) -> Unit) {
             actions = { QuickLinks(Routes.TASKS, nav) }
         )
 
-        // 日期条（今天 ±7 天，可横滑）+ 一键回今天（今天始终居中）
-        val dayOffsets = (-7L..14L).toList()
-        val todayIndex = 7 // offset=0（今天）在列表中的下标
+        // 日期条（今天前后各一年，可横滑）+ 一键回今天（今天始终居中）
+        val dayOffsets = (-365L..365L).toList()
+        val todayIndex = 365 // offset=0（今天）在列表中的下标
         val dateListState = rememberLazyListState()
         val dateScope = rememberCoroutineScope()
         suspend fun centerToday(animate: Boolean) {
@@ -250,8 +250,9 @@ fun TasksScreen(nav: (String) -> Unit) {
                         verticalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            when (offset) {
-                                0L -> "今天"; -1L -> "昨天"; 1L -> "明天"
+                            when {
+                                offset == 0L -> "今天"; offset == -1L -> "昨天"; offset == 1L -> "明天"
+                                d.dayOfMonth == 1 -> "${d.monthValue}月" // 每月 1 号显示月份，方便远端定位
                                 else -> listOf("一","二","三","四","五","六","日")[d.dayOfWeek.value - 1]
                             },
                             style = MaterialTheme.typography.labelSmall,
@@ -313,7 +314,8 @@ fun TasksScreen(nav: (String) -> Unit) {
                 else t.goalId?.let { gid -> goals.find { g -> g.id == gid }?.tagId == selectedTagId } ?: false
             }
             .filter { it.parentTaskId == null }
-            .sortedBy { it.sortOrder }
+            // 与桌面端同序：优先级降序，再按 sortOrder（拖动排序两端互通）
+            .sortedWith(compareByDescending<TaskItem> { it.priority }.thenBy { it.sortOrder })
 
         val activeTasks = visible.filter { !TaskLogic.isDoneOn(it, selectedDate, completions) }
         val doneTasks = visible.filter { TaskLogic.isDoneOn(it, selectedDate, completions) }
