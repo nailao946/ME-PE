@@ -180,7 +180,7 @@ private fun TimeStatsCard(mode: Int, start: LocalDate, end: LocalDate) {
     val rev = DataBus.rev
     var span by rememberSaveable { mutableStateOf(if (mode == 0) 1 else 2) }
     val tags = remember(rev) { Repos.timeTags() }
-    val records = remember(rev) { Repos.timeRecords().filter { it.endTime != null } }
+    val records = remember(rev) { Repos.timeRecords() }
     val today = LocalDate.now()
 
     val (s, e) = when (span) {
@@ -193,7 +193,8 @@ private fun TimeStatsCard(mode: Int, start: LocalDate, end: LocalDate) {
         val d = try { LocalDate.parse(r.date) } catch (_: Exception) { return@filter false }
         (s == null || !d.isBefore(s)) && (e == null || !d.isAfter(e))
     }
-    val perTag = tags.map { t -> t to inRange.filter { it.tagId == t.id }.sumOf { it.minutes() } }
+    // 与桌面端复盘一致：默认标签（闲时）不参与统计；运行中记录计入到当前时刻
+    val perTag = tags.filter { !it.isDefault }.map { t -> t to inRange.filter { it.tagId == t.id }.sumOf { it.minutes() } }
         .filter { it.second > 0 }
         .sortedByDescending { it.second }
     val total = perTag.sumOf { it.second }

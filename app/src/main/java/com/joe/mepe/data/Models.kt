@@ -119,6 +119,7 @@ data class TimeTag(
     @SerialName("Notes") var notes: String? = null,
     @SerialName("SortOrder") var sortOrder: Int = 0,
     @SerialName("IsPreset") var isPreset: Boolean = false,
+    @SerialName("IsDefault") var isDefault: Boolean = false,
 )
 
 @Serializable
@@ -131,8 +132,9 @@ data class TimeRecord(
     @SerialName("Note") var note: String? = null,
 ) {
     fun minutes(): Long {
-        val end = endTime ?: return 0
-        return java.time.Duration.between(startTime, end).toMinutes()
+        // 与桌面端一致：未结束的记录按当前时刻计入时长
+        val end = endTime ?: LocalDateTime.now()
+        return java.time.Duration.between(startTime, end).toMinutes().coerceAtLeast(0)
     }
 }
 

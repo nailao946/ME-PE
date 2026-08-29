@@ -264,8 +264,15 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
     val running = remember(rev, tick) { Repos.runningRecord() }
     val records = remember(rev) { Repos.timeRecords() }
 
-    val todayRecords = records.filter { it.date == today.toString() && it.endTime != null }
-    val todayTotalMin = todayRecords.sumOf { it.minutes() }
+    val todayRecords = records.filter { it.date == today.toString() }
+    // 今日总时长/分布图与桌面端一致：排除默认标签并应用统计标签范围（运行中记录计入到当前时刻）
+    val statsIncludedIds = remember(rev) {
+        Repos.getSetting("StatsIncludedTags", "").split(',')
+            .mapNotNull { it.trim().toIntOrNull() }.filter { it > 0 }.toSet()
+    }
+    val statTagIds = tags.filter { !it.isDefault && (statsIncludedIds.isEmpty() || it.id in statsIncludedIds) }
+        .map { it.id }.toSet()
+    val todayTotalMin = todayRecords.filter { it.tagId in statTagIds }.sumOf { it.minutes() }
     val runningTag = running?.let { r -> tags.find { it.id == r.tagId } }
 
     // 计时开始/停止 与 通知栏前台服务 同步
@@ -284,7 +291,7 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
 
     val fallbackColor = MaterialTheme.colorScheme.primary
     val distSlices = remember(rev) {
-        tags.map { t ->
+        tags.filter { it.id in statTagIds }.map { t ->
             PieSlice(
                 t.name, todayRecords.filter { it.tagId == t.id }.sumOf { it.minutes() }.toDouble(),
                 parseHexColor(t.color, fallbackColor)
@@ -293,7 +300,7 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
     }
     val weekDays = (6 downTo 0).map { today.minusDays(it.toLong()) }
     val weekTotals = remember(rev) {
-        weekDays.map { d -> records.filter { it.date == d.toString() && it.endTime != null }.sumOf { it.minutes() }.toDouble() }
+        weekDays.map { d -> records.filter { it.date == d.toString() }.sumOf { it.minutes() }.toDouble() }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -830,7 +837,7 @@ private fun TagBindRow(label: String, tagId: Int?, tags: List<TimeTag>, onClick:
 
 /**
  * 时间统计底部弹窗（从下往上浮出）：周期切换 + 总览统计 + 扇形分布 + 各标签时长 + 当日甘特时间轴 + 近14天趋势。
- * span: 0=今日 1=本周 2=本月 3=全部
+ * span: 0=今日 1=本周 2=本月 3=全部；统计口径与桌面端一致（排除默认标签 + 统计标签范围设置 + 运行中记录计入）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -838,7 +845,7 @@ private fun TimeStatsSheet(onClose: () -> Unit) {
     val rev = DataBus.rev
     var span by remember { mutableStateOf(0) }
     val tags = remember(rev) { Repos.timeTags() }
-    val records = remember(rev) { Repos.timeRecords().filter { it.endTime != null } }
+    val records = remember(rev) { Repos.timeRecords() }
     val today = LocalDate.now()
 
     val (s, e) = when (span) {
@@ -851,7 +858,14 @@ private fun TimeStatsSheet(onClose: () -> Unit) {
         val d = try { LocalDate.parse(r.date) } catch (_: Exception) { return@filter false }
         (s == null || !d.isBefore(s)) && (e == null || !d.isAfter(e))
     }
-    val perTag = tags.map { t ->
+
+    // 与桌面端统计口径一致：排除默认标签（如「闲时」），并应用设置里选定的统计标签范围
+    val includedIds = remember(rev) {
+        Repos.getSetting("StatsIncludedTags", "").split(',')
+            .mapNotNull { it.trim().toIntOrNull() }.filter { it > 0 }.toSet()
+    }
+    val statTags = tags.filter { !it.isDefault && (includedIds.isEmpty() || it.id in includedIds) }
+    val perTag = statTags.map { t ->
         Triple(t, inRange.filter { it.tagId == t.id }.sumOf { it.minutes() },
             parseHexColor(t.color, MaterialTheme.colorScheme.primary))
     }.filter { it.second > 0 }.sortedByDescending { it.second }
@@ -867,6 +881,7 @@ private fun TimeStatsSheet(onClose: () -> Unit) {
     }.coerceAtLeast(1)
 
     val slices = perTag.map { (t, min, c) -> PieSlice(t.name, min.toDouble(), c) }
+    // 甘特图与桌面端一致：包含运行中记录（画到当前时刻）
     val todayRecords = records.filter { it.date == today.toString() }
     val days14 = (13 downTo 0).map { today.minusDays(it.toLong()) }
     val daily = days14.map { d -> records.filter { it.date == d.toString() }.sumOf { it.minutes() }.toDouble() }
