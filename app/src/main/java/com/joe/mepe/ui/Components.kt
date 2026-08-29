@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -813,7 +814,7 @@ fun SwipeReveal(
     cornerDp: Int = 14,
     content: @Composable () -> Unit,
 ) {
-    val maxSwipePx = with(androidx.compose.ui.platform.LocalDensity.current) { 132.dp.toPx() }
+    val maxSwipePx = with(androidx.compose.ui.platform.LocalDensity.current) { 144.dp.toPx() }
     val cornerPx = with(androidx.compose.ui.platform.LocalDensity.current) { cornerDp.dp.toPx() }
     val offsetX = remember { androidx.compose.animation.core.Animatable(0f) }
     val scope = rememberCoroutineScope()
@@ -825,58 +826,46 @@ fun SwipeReveal(
     }
 
     Box(modifier.fillMaxWidth()) {
-        // 动作层：底面延续卡片色 + 凹角形状衔接卡片；两个圆形按钮
+        // 动作层：底面延续卡片色 + 凹角衔接卡片；两枚大圆角色调按钮（图标+文字），错落滑入
         val actionShape = remember(cornerPx) { SwipeActionsShape(cornerPx) }
         Row(
             Modifier
                 .align(Alignment.CenterEnd)
-                .width(132.dp)
+                .width(144.dp)
                 .fillMaxHeight()
                 .androidx_graphicsAlpha { ((-offsetX.value) / (maxSwipePx / 4f)).coerceIn(0f, 1f) }
                 .clip(actionShape)
-                .background(MaterialTheme.colorScheme.surface),
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 编辑（蓝色圆钮）
-            Box(
-                Modifier
-                    .width(66.dp)
-                    .fillMaxHeight()
-                    .clickable {
-                        onEdit()
-                        scope.launch { offsetX.animateTo(0f, tween(180)) }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    Modifier
-                        .size(48.dp)
-                        .background(Color(0xFF3E7BFA), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Filled.Edit, "编辑", tint = Color.White, modifier = Modifier.size(22.dp))
-                }
-            }
-            // 删除（红色圆钮）
-            Box(
-                Modifier
-                    .width(66.dp)
-                    .fillMaxHeight()
-                    .clickable {
-                        onDelete()
-                        scope.launch { offsetX.animateTo(0f, tween(180)) }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    Modifier
-                        .size(48.dp)
-                        .background(MaterialTheme.colorScheme.error, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Filled.Delete, "删除", tint = Color.White, modifier = Modifier.size(22.dp))
-                }
-            }
+            SwipeActionButton(
+                label = "编辑",
+                icon = Icons.Filled.Edit,
+                container = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                content = MaterialTheme.colorScheme.primary,
+                slideFrom = 26f,
+                progress = { ((-offsetX.value) / maxSwipePx).coerceIn(0f, 1f) },
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    onEdit()
+                    scope.launch { offsetX.animateTo(0f, tween(180)) }
+                },
+            )
+            SwipeActionButton(
+                label = "删除",
+                icon = Icons.Filled.Delete,
+                container = MaterialTheme.colorScheme.error.copy(alpha = 0.14f),
+                content = MaterialTheme.colorScheme.error,
+                slideFrom = 14f,
+                progress = { ((-offsetX.value) / maxSwipePx).coerceIn(0f, 1f) },
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    onDelete()
+                    scope.launch { offsetX.animateTo(0f, tween(180)) }
+                },
+            )
         }
         // 内容层：向左滑出露出动作
         Box(
@@ -911,6 +900,42 @@ private fun Modifier.androidx_graphicsAlpha(alpha: () -> Float): Modifier =
     this.then(
         Modifier.graphicsLayer { this.alpha = alpha() }
     )
+
+/**
+ * 左滑动作按钮（设计系统组件）：大圆角「色调按钮」——
+ * 图标 + 文字标签、柔和语义色底（主色/错误色 14% 透明度），随滑出进度错落滑入。
+ */
+@Composable
+private fun SwipeActionButton(
+    label: String,
+    icon: ImageVector,
+    container: Color,
+    content: Color,
+    slideFrom: Float,
+    progress: () -> Float,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier
+            .fillMaxHeight(0.82f)
+            .heightIn(max = 64.dp)
+            .graphicsLayer { translationX = (1f - progress()) * slideFrom }
+            .background(container, RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, label, tint = content, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.height(2.dp))
+            Text(
+                label, color = content,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
 
 /**
  * 左滑动作区形状：左侧上下两个凹角（内圆角，半径 r），右侧两个圆角（同 r）。
