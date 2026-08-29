@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Stop
@@ -405,6 +406,29 @@ private fun SectionLabelRow(text: String, sub: String?, action: (@Composable () 
     }
 }
 
+/** 番茄钟圆形图标按钮 */
+@Composable
+private fun PomoCircleButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    desc: String,
+    bg: Color,
+    tint: Color,
+    sizeDp: Int = 40,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(sizeDp.dp)
+            .clip(CircleShape)
+            .background(bg)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, desc, tint = tint, modifier = Modifier.size(20.dp))
+    }
+}
+
 /** 番茄钟卡片：大进度环 + 阶段色 + 控制 */
 @Composable
 private fun PomodoroCard(onOpenSettings: () -> Unit) {
@@ -449,42 +473,36 @@ private fun PomodoroCard(onOpenSettings: () -> Unit) {
                     }
                 }
             )
-            Spacer(Modifier.width(14.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Button(
-                    onClick = {
-                        if (!running || paused) PomodoroEngine.start() else PomodoroEngine.pause()
-                    },
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.width(88.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)
+            Spacer(Modifier.weight(1f))
+            // 图标圆钮列：主控（相位色）+ 跳过 + 重置
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                PomoCircleButton(
+                    icon = if (!running || paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                    desc = if (!running || paused) "开始" else "暂停",
+                    bg = if (running && !paused) phaseColor else MaterialTheme.colorScheme.primary,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    sizeDp = 46
                 ) {
-                    Icon(if (running && !paused) Icons.Filled.Pause else Icons.Filled.PlayArrow, null, Modifier.size(15.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(when { !running -> "开始"; paused -> "继续"; else -> "暂停" }, style = MaterialTheme.typography.labelLarge)
+                    if (!running || paused) PomodoroEngine.start() else PomodoroEngine.pause()
                 }
-                OutlinedButton(
-                    onClick = { PomodoroEngine.skip() },
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.width(88.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
+                PomoCircleButton(
+                    icon = Icons.Filled.SkipNext,
+                    desc = "跳过",
+                    bg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    enabled = running
+                )
+                {
+                    PomodoroEngine.skip()
+                }
+                PomoCircleButton(
+                    icon = Icons.Filled.Replay,
+                    desc = "重置",
+                    bg = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                    tint = MaterialTheme.colorScheme.error,
                     enabled = running
                 ) {
-                    Icon(Icons.Filled.SkipNext, null, Modifier.size(15.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("跳过", style = MaterialTheme.typography.labelLarge)
-                }
-                OutlinedButton(
-                    onClick = { PomodoroEngine.stop() },
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.width(88.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
-                    enabled = running,
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Icon(Icons.Filled.Stop, null, Modifier.size(15.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("重置", style = MaterialTheme.typography.labelLarge)
+                    PomodoroEngine.stop()
                 }
             }
         }
