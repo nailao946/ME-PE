@@ -194,3 +194,10 @@ app/src/main/java/com/joe/mepe/
 ## v2.4.10 更新
 
 - **新建按钮改为小圆 FAB**：任务页/目标页右下角改为纯 "+" 号的 56dp 圆形悬浮按钮（Material 3 规范），带按压抬升动效，不再占一行文字空间
+
+---
+
+## v2.4.11 更新
+
+- **AI 分析支持 Anthropic**：设置 → AI 分析新增「API 格式」选择（OpenAI 兼容 / Anthropic）；Anthropic 走 `/v1/messages`（x-api-key + anthropic-version 头），可与桌面端互通的 ai_providers.json 共用（ApiFormat 0/1 约定一致）；供应商列表显示格式标签
+- **关于页新增 GitHub 链接**：安卓端（nailao946/ME-PE）与桌面端（nailao946/OKR）项目主页，点击直接跳转浏览器

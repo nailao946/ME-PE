@@ -500,10 +500,11 @@ private fun AiPage(onBack: () -> Unit) {
     var aiKey by remember { mutableStateOf("") }
     var aiUrl by remember { mutableStateOf("https://api.deepseek.com") }
     var aiModel by remember { mutableStateOf("deepseek-chat") }
+    var aiFormat by remember { mutableStateOf(0) } // 0=OpenAI 兼容 1=Anthropic
     var msg by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader(title = "AI 分析", icon = Icons.Filled.SmartToy, subtitle = "OpenAI 兼容供应商", onBack = onBack)
+        ScreenHeader(title = "AI 分析", icon = Icons.Filled.SmartToy, subtitle = "OpenAI / Anthropic 供应商", onBack = onBack)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             SectionCard(title = "供应商") {
                 val providers = Repos.aiProviders()
@@ -515,7 +516,10 @@ private fun AiPage(onBack: () -> Unit) {
                         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("${p.name}${if (p.isDefault) "（默认）" else ""}", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
-                                Text("${p.model} · ${p.baseUrl}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    "${if (p.apiFormat == 1) "Anthropic" else "OpenAI 兼容"} · ${p.model} · ${p.baseUrl}",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                             if (!p.isDefault) TextButton(onClick = {
                                 Repos.saveAiProviders(providers.map { it.copy(isDefault = it.id == p.id) })
@@ -528,8 +532,18 @@ private fun AiPage(onBack: () -> Unit) {
                 }
             }
             SectionCard(title = "添加供应商") {
-                LabeledField("供应商名称", aiName, { aiName = it }, placeholder = "如：DeepSeek")
+                LabeledField("供应商名称", aiName, { aiName = it }, placeholder = "如：DeepSeek / Claude")
+                Spacer(Modifier.height(8.dp))
+                Text("API 格式", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(6.dp))
+                Segmented(listOf("OpenAI 兼容", "Anthropic"), aiFormat) { aiFormat = it }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (aiFormat == 1) "Anthropic：请求 地址/v1/messages，如 https://api.anthropic.com，模型如 claude-sonnet-4-5"
+                    else "OpenAI 兼容：请求 地址/chat/completions，如 https://api.deepseek.com",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
                 LabeledField("API Key", aiKey, { aiKey = it })
                 Spacer(Modifier.height(6.dp))
                 LabeledField("Base URL", aiUrl, { aiUrl = it })
@@ -540,7 +554,8 @@ private fun AiPage(onBack: () -> Unit) {
                     if (aiName.isBlank() || aiKey.isBlank()) { msg = "✗ 名称和 Key 必填"; return@Button }
                     Repos.addAiProvider(
                         com.joe.mepe.data.AiProvider(name = aiName.trim(), encryptedApiKey = aiKey.trim(),
-                            baseUrl = aiUrl.trim(), model = aiModel.trim(), isDefault = Repos.aiProviders().isEmpty())
+                            baseUrl = aiUrl.trim(), model = aiModel.trim(), apiFormat = aiFormat,
+                            isDefault = Repos.aiProviders().isEmpty())
                     )
                     aiName = ""; aiKey = ""
                     msg = "✓ 已添加供应商"
@@ -585,11 +600,17 @@ private fun ModulesPage(nav: (String) -> Unit, onBack: () -> Unit) {
 
 @Composable
 private fun AboutPage(onBack: () -> Unit) {
+    val ctx = LocalContext.current
+
+    fun openUrl(url: String) {
+        try { ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) } catch (_: Exception) { }
+    }
+
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(title = "关于", icon = Icons.Filled.Info, subtitle = "目标地图 PE", onBack = onBack)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             SectionCard(title = null) {
-                Text("目标地图 PE（ME PE）v2.3.0", fontWeight = FontWeight.SemiBold)
+                Text("目标地图 PE（ME PE）v2.4.11", fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "个人目标管理 & 健康追踪 · 纯本地存储，可选 GitHub 云同步",
@@ -599,6 +620,33 @@ private fun AboutPage(onBack: () -> Unit) {
                 Text(
                     "数据与桌面版（WPF）互通：桌面端备份 zip 可直接导入；GitHub 云同步可直接在两端互传。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            SectionCard(title = "项目主页") {
+                Row(
+                    Modifier.fillMaxWidth().clickable { openUrl("https://github.com/nailao946/ME-PE") },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("⭐ GitHub（安卓端）", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "github.com/nailao946/ME-PE",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth().clickable { openUrl("https://github.com/nailao946/OKR") },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("💻 GitHub（桌面端）", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "github.com/nailao946/OKR",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "点击跳转浏览器打开，欢迎 Star 与反馈建议",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Spacer(Modifier.height(24.dp))
