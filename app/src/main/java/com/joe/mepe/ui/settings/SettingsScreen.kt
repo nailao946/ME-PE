@@ -279,6 +279,11 @@ private fun GoalsPage(onBack: () -> Unit) {
 
 // ============ 云同步（GitHub） ============
 
+private fun copyText(ctx: android.content.Context, text: String) {
+    val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+    cm.setPrimaryClip(android.content.ClipData.newPlainText("ME", text))
+}
+
 @Composable
 private fun SyncPage(onBack: () -> Unit) {
     val ctx = LocalContext.current
@@ -291,6 +296,7 @@ private fun SyncPage(onBack: () -> Unit) {
     var syncing by remember { mutableStateOf(false) }
     var loginMsg by remember { mutableStateOf("") }
     var loggingIn by remember { mutableStateOf(false) }
+    var pendingCode by remember { mutableStateOf("") }
     var msg by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
@@ -314,19 +320,38 @@ private fun SyncPage(onBack: () -> Unit) {
                 Button(
                     onClick = {
                         loggingIn = true
+                        pendingCode = ""
                         loginMsg = "正在请求授权码…"
                         scope.launch {
                             try {
                                 val s = GitHubLogin.start()
-                                loginMsg = "浏览器即将打开，登录 GitHub 后输入代码 ${s.userCode}，点 Authorize 授权…"
+                                pendingCode = s.userCode
+                                try {
+                                    copyText(ctx, s.userCode)
+                                    Toast.makeText(ctx, "授权码 ${s.userCode} 已复制到剪贴板", Toast.LENGTH_LONG).show()
+                                } catch (_: Exception) { }
+                                loginMsg = "浏览器即将打开，登录 GitHub 后粘贴授权码 ${s.userCode}，点 Authorize 授权…"
                                 try {
                                     ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(s.verifyUrl)))
                                 } catch (_: Exception) { }
                                 var result: String? = null
+                                var failures = 0
                                 while (isActive) {
-                                    kotlinx.coroutines.delay(s.interval * 1000L)
-                                    result = GitHubLogin.poll(s)
+                                    // 网络异常后额外多等 3 秒再重试，给网络恢复留时间
+                                    kotlinx.coroutines.delay(s.interval * 1000L + (if (failures > 0) 3000L else 0L))
+                                    result = try {
+                                        val r = GitHubLogin.poll(s)
+                                        if (failures > 0) loginMsg = "网络已恢复，继续等待授权…"
+                                        failures = 0
+                                        r
+                                    } catch (_: Exception) {
+                                        // 网络抖动/切后台导致的解析失败不打死流程，静默重试直到授权码过期
+                                        failures++
+                                        if (failures == 3) loginMsg = "网络不稳定（域名解析失败），正在自动重试，请保持网络畅通…"
+                                        null
+                                    }
                                     if (result != null) break
+                                    if (failures >= 30) { result = "!无法连接 GitHub：域名持续解析失败，请检查网络或换一个网络（如手机热点）后重试"; break }
                                     if (System.currentTimeMillis() > s.expiresAt) { result = "!授权超时，请重试"; break }
                                 }
                                 val r = result ?: "!授权超时"
@@ -346,6 +371,8 @@ private fun SyncPage(onBack: () -> Unit) {
                                         "✓ 授权成功，但自动建仓失败：${e.message}（可手动填仓库名）"
                                     }
                                 }
+                            } catch (e: java.net.UnknownHostException) {
+                                loginMsg = "✗ 无法连接 GitHub：域名解析失败。请检查网络，或换一个网络（如手机热点）后重试"
                             } catch (e: Exception) {
                                 loginMsg = "✗ ${e.message}"
                             }
@@ -355,6 +382,14 @@ private fun SyncPage(onBack: () -> Unit) {
                     enabled = !loggingIn,
                     shape = MaterialTheme.shapes.small
                 ) { Text(if (loggingIn) "等待授权…" else "账号授权登录") }
+                if (loggingIn && pendingCode.isNotBlank()) {
+                    TextButton(onClick = {
+                        try {
+                            copyText(ctx, pendingCode)
+                            Toast.makeText(ctx, "授权码 $pendingCode 已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                        } catch (_: Exception) { }
+                    }) { Text("再次复制授权码 $pendingCode") }
+                }
                 if (loginMsg.isNotBlank()) {
                     Spacer(Modifier.height(6.dp))
                     Text(loginMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

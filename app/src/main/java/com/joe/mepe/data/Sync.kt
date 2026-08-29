@@ -9,12 +9,17 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import okhttp3.Dns
 import okhttp3.FormBody
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.dnsoverhttps.DnsOverHttps
 import java.io.File
+import java.net.InetAddress
+import java.net.UnknownHostException
 import java.util.Base64
 import java.util.concurrent.TimeUnit
 
@@ -57,10 +62,39 @@ object SyncConfig {
     }
 }
 
+/**
+ * DNS 解析兜底：先走系统 DNS，查不到时自动改用加密 DNS（DoH，阿里 223.5.5.5）再查一次。
+ * 部分运营商网络解析 github.com 会返回空结果（报 unable to resolve host），浏览器因为自带
+ * 加密 DNS 能打开网页，App 用系统 DNS 就会失败；这里给 App 补上同样的能力。
+ */
+object DnsFallback : Dns {
+    private val doh: DnsOverHttps by lazy {
+        DnsOverHttps.Builder()
+            .client(OkHttpClient.Builder().callTimeout(10, TimeUnit.SECONDS).build())
+            .url("https://dns.alidns.com/dns-query".toHttpUrl())
+            .bootstrapDnsHosts(
+                InetAddress.getByName("223.5.5.5"),
+                InetAddress.getByName("223.6.6.6"),
+            )
+            .build()
+    }
+
+    override fun lookup(hostname: String): List<InetAddress> {
+        val sys = try { Dns.SYSTEM.lookup(hostname) } catch (_: UnknownHostException) { emptyList() }
+        if (sys.isNotEmpty()) return sys
+        return try {
+            doh.lookup(hostname)
+        } catch (_: Exception) {
+            throw UnknownHostException("无法解析 $hostname（系统 DNS 与加密 DNS 均失败），请检查网络")
+        }
+    }
+}
+
 object GitHubSync {
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .dns(DnsFallback)
         .build()
 
     private const val API = "https://api.github.com"
@@ -284,6 +318,7 @@ object GitHubLogin {
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .dns(DnsFallback)
         .build()
 
     data class Session(

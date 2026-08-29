@@ -12,8 +12,8 @@ android {
         applicationId = "com.joe.mepe"
         minSdk = 26
         targetSdk = 34
-        versionCode = 30
-        versionName = "2.4.24"
+        versionCode = 31
+        versionName = "2.4.25"
     }
 
     buildTypes {
@@ -60,6 +60,7 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
