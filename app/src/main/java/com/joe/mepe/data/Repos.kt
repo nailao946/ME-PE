@@ -39,6 +39,14 @@ object Repos {
         saveTasks(all)
     }
 
+    /** 拖动排序：整组任务按给定顺序一次性写回（单次保存、单次刷新，拖动过程更顺滑） */
+    fun reorderTasks(ordered: List<TaskItem>) {
+        val all = JsonStore.loadList("tasks") { f -> JsonStore.json.decodeFromString(taskK, f.readText()) }
+        val map = ordered.associateBy { it.id }
+        JsonStore.saveText("tasks", JsonStore.json.encodeToString(taskK, all.map { map[it.id] ?: it }))
+        DataBus.bump()
+    }
+
     fun softDeleteTask(id: Int, deleted: Boolean = true) {
         val all = JsonStore.loadList("tasks") { f -> JsonStore.json.decodeFromString(taskK, f.readText()) }
         val t = all.firstOrNull { it.id == id } ?: return

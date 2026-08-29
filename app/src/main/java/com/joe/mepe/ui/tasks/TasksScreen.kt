@@ -132,24 +132,36 @@ fun TasksScreen(nav: (String) -> Unit) {
 
     fun groupParent(group: String): Int? = if (group.startsWith("p")) group.removePrefix("p").toIntOrNull() else null
 
-    /** 把 draggedId 移到 targetId 前/后（同组内），并重排 Priority+SortOrder 持久化 */
-    fun moveTo(draggedId: Int, targetId: Int, parentId: Int?, down: Boolean) {
-        val list = Repos.tasks()
-            .filter { !it.isDeleted && it.parentTaskId == parentId }
-            .sortedWith(compareBy({ -it.priority }, { it.sortOrder }))
-            .toMutableList()
-        val di = list.indexOfFirst { it.id == draggedId }
-        val ti = list.indexOfFirst { it.id == targetId }
+    /** 各组当前界面显示顺序：active/done 由列表直接写入，子任务组由卡片注册 */
+    val groupOrderIds = remember { mutableMapOf<String, List<Int>>() }
+
+    /**
+     * 拖动落位：按"界面显示顺序"计算新序列并持久化。
+     * 旧实现对整组任务（含未显示的任务）重排，导致松手后位置对不上；现在
+     * 只重排显示中的任务，其余任务按原相对位置嵌回，显示顺序与落点完全一致。
+     */
+    fun reorderGroup(group: String, draggedId: Int, targetId: Int, down: Boolean) {
+        val displayed = groupOrderIds[group] ?: return
+        val seq = displayed.toMutableList()
+        val di = seq.indexOf(draggedId)
+        val ti = seq.indexOf(targetId)
         if (di < 0 || ti < 0) return
-        val item = list.removeAt(di)
-        val insertAt = (list.indexOfFirst { it.id == targetId } + if (down) 1 else 0).coerceIn(0, list.size)
-        list.add(insertAt, item)
-        list.forEachIndexed { idx, t ->
-            t.priority = list.size - idx
+        seq.removeAt(di)
+        seq.add((seq.indexOf(targetId) + if (down) 1 else 0).coerceIn(0, seq.size), draggedId)
+        if (seq == displayed) return
+
+        val all = Repos.tasks()
+        val groupAll = all.filter { !it.isDeleted && it.parentTaskId == groupParent(group) }
+            .sortedBy { it.sortOrder }
+        val byId = groupAll.associateBy { it.id }
+        val moved = seq.toSet()
+        val queue = ArrayDeque(seq.mapNotNull { byId[it] })
+        val newOrder = groupAll.map { g -> if (g.id in moved) queue.removeFirst() else g }
+        newOrder.forEachIndexed { idx, t ->
             t.sortOrder = idx
-            Repos.updateTask(t)
+            t.priority = newOrder.size - idx
         }
-        DataBus.bump()
+        Repos.reorderTasks(newOrder)
     }
 
     /** 拖动经过相邻同组项时触发换位；dropTargetKey 显示预计落点 */
@@ -173,7 +185,7 @@ fun TasksScreen(nav: (String) -> Unit) {
         if (crossed) {
             val targetId = rowGroups[t.key]?.second ?: return
             val draggedId = rowGroups[key]?.second ?: return
-            moveTo(draggedId, targetId, groupParent(group), down = dragOffset > 0)
+            reorderGroup(group, draggedId, targetId, down = dragOffset > 0)
             dragOffset += if (dragOffset > 0) -t.size.toFloat() else t.size.toFloat()
         }
     }
@@ -272,10 +284,12 @@ fun TasksScreen(nav: (String) -> Unit) {
                 else t.goalId?.let { gid -> goals.find { g -> g.id == gid }?.tagId == selectedTagId } ?: false
             }
             .filter { it.parentTaskId == null }
-            .sortedWith(compareBy({ -it.priority }, { it.sortOrder }))
+            .sortedBy { it.sortOrder }
 
         val activeTasks = visible.filter { !TaskLogic.isDoneOn(it, selectedDate, completions) }
         val doneTasks = visible.filter { TaskLogic.isDoneOn(it, selectedDate, completions) }
+        groupOrderIds["active"] = activeTasks.map { it.id }
+        groupOrderIds["done"] = doneTasks.map { it.id }
 
         LazyColumn(Modifier.fillMaxSize().weight(1f), state = listState) {
             item(key = "head_empty") {
@@ -300,6 +314,7 @@ fun TasksScreen(nav: (String) -> Unit) {
                         onEdit = { editingTask = it }, onDelete = { deleteTarget = it },
                         onOpen = { detailTaskId = it.id },
                         registerKey = { k, id -> rowGroups[k] = subGroupKey(k) to id },
+                        registerOrder = { g, ids -> groupOrderIds[g] = ids },
                     )
                 }
             }
@@ -322,6 +337,7 @@ fun TasksScreen(nav: (String) -> Unit) {
                         onEdit = { editingTask = it }, onDelete = { deleteTarget = it },
                         onOpen = { detailTaskId = it.id },
                         registerKey = { k, id -> rowGroups[k] = subGroupKey(k) to id },
+                        registerOrder = { g, ids -> groupOrderIds[g] = ids },
                     )
                 }
             }
@@ -396,11 +412,13 @@ private fun DraggableTaskGroup(
     onDelete: (TaskItem) -> Unit,
     onOpen: (TaskItem) -> Unit,
     registerKey: (String, Int) -> Unit,
+    registerOrder: (String, List<Int>) -> Unit,
 ) {
     val subtasks = rememberData(key = task.id to date) {
         Repos.tasks().filter { it.parentTaskId == task.id && !it.isDeleted }
-            .sortedWith(compareBy({ -it.priority }, { it.sortOrder }))
+            .sortedBy { it.sortOrder }
     }
+    registerOrder("p${task.id}", subtasks.map { it.id })
     Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
         SwipeReveal(onEdit = { onEdit(task) }, onDelete = { onDelete(task) }, locked = draggingKey != null) {
             DraggableCard(
@@ -643,7 +661,7 @@ private fun TaskDetailSheet(
     val completions = remember(rev) { Repos.completions() }
     val subtasks = remember(rev, task.id) {
         Repos.tasks().filter { it.parentTaskId == task.id && !it.isDeleted }
-            .sortedWith(compareBy({ -it.priority }, { it.sortOrder }))
+            .sortedBy { it.sortOrder }
     }
     var newSub by remember { mutableStateOf("") }
     var addAmount by remember { mutableStateOf("") }
