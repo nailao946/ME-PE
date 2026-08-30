@@ -447,13 +447,25 @@ private class GitBackend(
     } catch (_: Exception) { null } // 不存在则新建
 
     override fun write(name: String, content: String, prevRev: String?): String {
-        val payload = buildJsonObject {
+        fun body(sha: String?): String = buildJsonObject {
             put("message", "ME 数据同步（Android）· ${java.time.LocalDateTime.now()}")
             put("content", Base64.getEncoder().encodeToString(content.toByteArray(Charsets.UTF_8)))
             put("branch", branch)
-            if (prevRev != null) put("sha", prevRev)
+            if (sha != null) put("sha", sha)
         }.toString()
-        val resp = parseObj(call(dataUrl("data/${enc(name)}"), "PUT", payload))
+        val path = dataUrl("data/${enc(name)}")
+        // Gitee 与 GitHub 不同：PUT 是纯「更新」接口，不带 sha 一律 400 sha is missing（即使文件不存在），
+        // 新建文件必须走 POST；撞上已存在（本地版本记录缺失）时取最新 sha 转更新。GitHub 的 PUT 兼容新建+更新，维持原行为
+        val resp: JsonObject = if (prevRev != null || !isGitee) {
+            parseObj(call(path, "PUT", body(prevRev)))
+        } else try {
+            parseObj(call(path, "POST", body(null)))
+        } catch (e: RuntimeException) {
+            val m = e.message.orEmpty()
+            if (!(m.contains("存在") || m.contains("exist", ignoreCase = true))) throw e
+            val fresh = revOf(name) ?: throw e
+            parseObj(call(path, "PUT", body(fresh)))
+        }
         return (resp["content"] as? JsonObject)?.get("sha")?.toString()?.trim('"') ?: ""
     }
 }

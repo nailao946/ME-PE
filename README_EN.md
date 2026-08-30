@@ -96,6 +96,10 @@ app/src/main/java/com/joe/mepe/
 
 ## Recent Updates
 
+### v2.4.39
+
+- **Fixed Gitee upload failing with "sha is missing" (0/15 files)**: Gitee's API differs from GitHub's — creating a file requires POST, while PUT is strictly an update endpoint that must carry the file's sha (rejected with HTTP 400 otherwise, even when the file doesn't exist). New files previously went through a sha-less PUT, so every first-time upload failed. File creation now uses POST, with an automatic fallback to a sha-carrying update when the file already exists; fixed together with the desktop version
+
 ### v2.4.38
 
 - **Review-screen statistics now match the desktop**: "Completed tasks" became **completed / total due**. Total due counts only tasks actually due that day — subtasks, quantitative tasks without a daily target, and recurring tasks not scheduled today (e.g. a Sat/Sun task on Monday) are excluded; completion rate = completed ÷ total due. Quantitative tasks with a daily target count as completed on days with a check-in record; a finished quantitative task counts only up to the day it reached its target
