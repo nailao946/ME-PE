@@ -2,6 +2,10 @@ package com.joe.mepe.ui.tasks
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -47,8 +51,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
-import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -60,9 +62,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -71,6 +76,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.joe.mepe.data.DataBus
 import com.joe.mepe.data.Goal
@@ -120,15 +126,57 @@ fun TasksScreen(nav: (String) -> Unit) {
     var deleteTarget by remember { mutableStateOf<TaskItem?>(null) }
     var detailTaskId by remember { mutableStateOf<Int?>(null) }
 
-    // ---- 云同步：下拉列表触发（微博式），顶栏状态球可点击同步，过程与结果见状态球 + Toast ----
+    // ---- 云同步：下拉列表顶部露出空白、松手弹回（微博式，无加载圈圈），下拉超过阈值静默触发一次完整同步；
+    //      同步过程看右上角状态球（呼吸闪烁），结果用 Toast 轻提示 ----
     val syncCtx = LocalContext.current
-    val pullState = rememberPullToRefreshState()
-    // 松手超过阈值后 isRefreshing=true → 执行一次完整同步，完成后自动收起转圈
-    LaunchedEffect(pullState.isRefreshing) {
-        if (!pullState.isRefreshing) return@LaunchedEffect
-        if (SyncStatusBus.state != SyncStatusBus.State.RUNNING)
-            runFullSync(syncCtx, toast = true)
-        pullState.endRefresh()
+    val listState = rememberLazyListState()
+    val density = LocalDensity.current
+    val maxPull = with(density) { 128.dp.toPx() }      // 最大下拉位移（橡皮筋上限）
+    val triggerPull = with(density) { 88.dp.toPx() }   // 松手触发同步的最小下拉距离
+    var pullOffset by remember { mutableStateOf(0f) }
+    // 下拉时 1:1 跟手（snap），松手归零后弹簧回弹（spring）
+    val pullDisplay by animateFloatAsState(
+        targetValue = pullOffset,
+        animationSpec = if (pullOffset > 0f) snap()
+        else spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "pullOffset"
+    )
+    val syncScope = rememberCoroutineScope()
+    val pullConnection = remember(listState, maxPull, triggerPull) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val dy = available.y
+                return when {
+                    // 列表在顶部继续下拉：吃掉手势转成「露出空白」
+                    dy > 0 && !listState.canScrollBackward -> {
+                        pullOffset = (pullOffset + dy).coerceAtMost(maxPull)
+                        Offset(0f, dy)
+                    }
+                    // 下拉后又往上推：先收回下拉距离，剩余才让列表滚动
+                    dy < 0 && pullOffset > 0f -> {
+                        val consumed = dy.coerceAtLeast(-pullOffset)
+                        pullOffset += consumed
+                        Offset(0f, consumed)
+                    }
+                    else -> Offset.Zero
+                }
+            }
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                // 一帧内滚动越过顶部的剩余下拉量
+                if (available.y > 0 && !listState.canScrollBackward) {
+                    pullOffset = (pullOffset + available.y).coerceAtMost(maxPull)
+                    return Offset(0f, available.y)
+                }
+                return Offset.Zero
+            }
+            override suspend fun onPreFling(velocity: Velocity): Velocity {
+                val pulled = pullOffset
+                pullOffset = 0f   // 无论是否触发同步，松手都弹回
+                if (pulled >= triggerPull && SyncStatusBus.state != SyncStatusBus.State.RUNNING)
+                    syncScope.launch { runFullSync(syncCtx, toast = true) }
+                return Velocity.Zero
+            }
+        }
     }
 
     val rev = DataBus.rev
@@ -142,7 +190,6 @@ fun TasksScreen(nav: (String) -> Unit) {
     val (allTasks, completions, goals, tags, timeTags) = data
 
     // ---- 长按拖动排序状态 ----
-    val listState = rememberLazyListState()
     var draggingKey by remember { mutableStateOf<String?>(null) }
     var dragOffset by remember { mutableStateOf(0f) }
     var dropTargetKey by remember { mutableStateOf<String?>(null) }
@@ -353,9 +400,9 @@ fun TasksScreen(nav: (String) -> Unit) {
         val activeRows = rowsFor(activeTasks)
         val doneRows = rowsFor(doneTasks)
 
-        // 下拉刷新：列表在顶部继续下拉触发云同步；转圈指示器显示在下拉位置
-        Box(Modifier.weight(1f).nestedScroll(pullState.nestedScrollConnection)) {
-        LazyColumn(Modifier.fillMaxSize(), state = listState) {
+        // 下拉刷新：列表在顶部继续下拉，内容整体下滑露出空白，松手弹回（不再显示转圈指示器）
+        Box(Modifier.weight(1f).nestedScroll(pullConnection)) {
+        LazyColumn(Modifier.fillMaxSize().graphicsLayer { translationY = pullDisplay }, state = listState) {
             item(key = "head_empty") {
                 if (activeTasks.isEmpty() && doneTasks.isEmpty()) EmptyHint("此日期没有任务", Icons.Filled.Checklist)
             }
@@ -401,7 +448,6 @@ fun TasksScreen(nav: (String) -> Unit) {
             }
             item(key = "tail") { Spacer(Modifier.height(96.dp)) }
         }
-            PullToRefreshContainer(pullState, Modifier.align(Alignment.TopCenter))
         }
     }
 

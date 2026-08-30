@@ -9,6 +9,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import okhttp3.Credentials
 import okhttp3.Dns
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -19,27 +20,38 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.dnsoverhttps.DnsOverHttps
 import java.io.File
 import java.net.InetAddress
+import java.net.URLDecoder
+import java.net.URLEncoder
 import java.net.UnknownHostException
+import java.security.MessageDigest
 import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 /**
- * GitHub 免费云同步：把 JsonData 目录的 JSON 文件提交到用户自己的私有仓库 `data/` 目录。
- * 配置（PAT/仓库名）保存在 JsonData 之外，避免随数据一起被上传。
+ * 云同步：把 JsonData 目录的 JSON 文件备份到用户自己的云端（GitHub / Gitee 私有仓库 data/ 目录，
+ * 或任意 WebDAV 服务的 ME-Data 文件夹，如坚果云）。三种方式 PC ↔ 安卓互通，文件布局完全一致。
+ * 配置（令牌/账号密码）保存在 JsonData 之外，避免随数据一起被上传。
  */
 object SyncConfig {
     @Serializable
     data class Conf(
-        var pat: String = "",
-        var refreshToken: String = "",  // GitHub App 开启「令牌过期」时用于自动续期
-        var tokenExpiresAt: Long = 0L,  // 令牌到期时间戳（毫秒）；0 = 令牌不过期
-        var repo: String = "",      // owner/name
-        var branch: String = "main",
+        var provider: String = "github",  // github | gitee | webdav
+        var pat: String = "",             // GitHub token
+        var refreshToken: String = "",    // GitHub App 开启「令牌过期」时用于自动续期
+        var tokenExpiresAt: Long = 0L,    // 令牌到期时间戳（毫秒）；0 = 令牌不过期
+        var repo: String = "",            // Git 供应商=owner/name 中的 name；WebDAV=文件夹名
+        var branch: String = "main",      // 仅 Git 供应商使用（GitHub 默认 main，Gitee 默认 master）
         var autoPush: Boolean = false,
         var lastPushAt: String = "",
         var lastPullAt: String = "",
-        var account: String = "",   // 授权登录后显示的 GitHub 用户名
-        // 每个文件上次同步后的云端 sha，用于检测「云端比本地新」避免覆盖别人/别的设备的更新
+        var account: String = "",         // GitHub 登录用户名（显示用）
+        var giteePat: String = "",        // Gitee 私人令牌（gitee.com → 设置 → 私人令牌）
+        var giteeAccount: String = "",    // Gitee 用户名（显示用）
+        var webdavUrl: String = "",       // WebDAV 地址，留空 = 坚果云 https://dav.jianguoyun.com/dav/
+        var webdavUser: String = "",      // WebDAV 账号（坚果云为注册手机号/邮箱）
+        var webdavPass: String = "",      // WebDAV 密码（坚果云用「安全选项」里生成的应用密码）
+        // 每个文件上次同步后的云端版本标识（Git=文件 sha，WebDAV=内容 md5），
+        // 用于检测「云端比本地新」避免覆盖别人/别的设备的更新
         var fileShas: Map<String, String> = emptyMap(),
     )
 
@@ -92,63 +104,53 @@ object DnsFallback : Dns {
     }
 }
 
-object GitHubSync {
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .dns(DnsFallback)
-        .build()
+/** 云端存储的统一抽象：push/pull 只认这份接口，三种同步方式各自实现 */
+private interface CloudBackend {
+    /** 确保云端仓库/目录存在（不存在就创建），返回用于展示的目标名 */
+    fun ensureReady(context: Context): String
 
-    private const val API = "https://api.github.com"
+    /** 列出同步目录下的文件（目录不存在返回空列表，其它网络错误抛异常） */
+    fun list(): List<RemoteFile>
 
-    /** 统一错误文案：401 = 令牌在 GitHub 侧已失效（被撤销或过期），引导重新授权 */
-    private fun describeError(code: Int, text: String): String =
-        if (code == 401) "GitHub 授权已失效（令牌被撤销或已过期），请重新授权登录一次即可恢复"
-        else "HTTP $code：${text.take(300)}"
+    /** 读取文件内容，返回 (内容, 版本标识)；文件不存在返回 null */
+    fun read(name: String): Pair<String, String?>?
 
-    private fun request(conf: SyncConfig.Conf, url: String, method: String, body: String?, accept: String = "application/vnd.github+json"): Request =
-        Request.Builder()
-            .url(url)
-            .header("Authorization", "Bearer ${conf.pat}")
-            .header("Accept", accept)
-            .header("User-Agent", "ME-PE")
-            .method(method, body?.toRequestBody("application/json".toMediaType()))
-            .build()
+    /** 当前云端版本标识（Git=文件 sha，WebDAV=内容 md5）；文件不存在返回 null */
+    fun revOf(name: String): String?
 
-    /** 发请求并返回原始响应体；非 2xx 抛异常 */
-    private fun httpCall(conf: SyncConfig.Conf, url: String, method: String, body: String?): String {
-        val resp = http.newCall(request(conf, url, method, body)).execute()
-        resp.use { r ->
-            val text = r.body?.string() ?: ""
-            if (!r.isSuccessful) throw RuntimeException(describeError(r.code, text))
-            return text
-        }
-    }
+    /** 写入文件，返回新的云端版本标识 */
+    fun write(name: String, content: String, prevRev: String?): String
+}
 
-    /** GET 请求（可指定 Accept），失败自动重试一次：移动网络到 GitHub 的链路不稳，偶发响应不完整 */
-    private fun httpGet(conf: SyncConfig.Conf, url: String, accept: String): String {
-        var last: Exception? = null
-        repeat(2) { attempt ->
-            try {
-                val resp = http.newCall(request(conf, url, "GET", null, accept)).execute()
-                resp.use { r ->
-                    val text = r.body?.string() ?: ""
-                    if (!r.isSuccessful) throw RuntimeException(describeError(r.code, text))
-                    return text
-                }
-            } catch (e: Exception) {
-                last = e
-                if (attempt == 0) try { Thread.sleep(1200) } catch (_: InterruptedException) { }
-            }
-        }
-        throw last ?: RuntimeException("请求失败")
-    }
+private data class RemoteFile(val name: String, val size: Long, val rev: String)
 
-    private fun parseObj(text: String): JsonObject =
-        JsonStore.json.parseToJsonElement(text) as JsonObject
+private val http = OkHttpClient.Builder()
+    .connectTimeout(20, TimeUnit.SECONDS)
+    .readTimeout(30, TimeUnit.SECONDS)
+    .dns(DnsFallback)
+    .build()
 
-    /** 反馈提交目标仓库（项目 Issues，非用户的同步数据仓库） */
+private const val GITHUB_API = "https://api.github.com"
+private const val GITEE_API = "https://gitee.com/api/v5"
+
+private fun parseObj(text: String): JsonObject =
+    JsonStore.json.parseToJsonElement(text) as JsonObject
+
+private fun md5(text: String): String =
+    MessageDigest.getInstance("MD5").digest(text.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+
+private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
+
+object CloudSync {
+    /** 反馈提交目标仓库（项目 Issues，非用户的同步数据仓库）。反馈始终走 GitHub，与云同步方式无关 */
     private const val FEEDBACK_REPO = "nailao946/ME-PE"
+
+    private fun backendFor(conf: SyncConfig.Conf): CloudBackend = when (conf.provider) {
+        "gitee" -> GitBackend(conf, GITEE_API, "Gitee", true)
+        "webdav" -> WebDavBackend(conf)
+        else -> GitBackend(conf, GITHUB_API, "GitHub", false)
+    }
 
     /**
      * 提交用户反馈到项目仓库 Issues。任何 GitHub 账号都能在公开仓库提 issue，无需仓库写权限；
@@ -156,7 +158,8 @@ object GitHubSync {
      */
     suspend fun submitFeedback(context: Context, content: String): Int = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
-        if (conf.pat.isBlank()) throw RuntimeException("尚未绑定 GitHub，请先在「设置 → 云同步」中登录后再提交反馈")
+        if (conf.pat.isBlank())
+            throw RuntimeException("提交反馈需要 GitHub 授权（与云同步方式无关）：请在「设置 → 云同步」选择 GitHub 并登录后再提交")
         GitHubLogin.maybeRefresh(context, conf)
         val text = content.trim()
         if (text.isEmpty()) throw RuntimeException("请先填写反馈内容")
@@ -169,111 +172,49 @@ object GitHubSync {
             put("body", body)
         }.toString()
 
-        val resp = httpCall(conf, "$API/repos/$FEEDBACK_REPO/issues", "POST", payload)
-        (parseObj(resp)["number"]?.toString()?.trim('"'))?.toIntOrNull() ?: 0
+        val req = Request.Builder().url("$GITHUB_API/repos/$FEEDBACK_REPO/issues")
+            .header("Authorization", "Bearer ${conf.pat}")
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "ME-PE")
+            .post(payload.toRequestBody("application/json".toMediaType()))
+            .build()
+        http.newCall(req).execute().use { r ->
+            val text2 = r.body?.string() ?: ""
+            if (!r.isSuccessful) throw RuntimeException("HTTP ${r.code}：${text2.take(300)}")
+            (parseObj(text2)["number"]?.toString()?.trim('"'))?.toIntOrNull() ?: 0
+        }
     }
 
-    /**
-     * 确保同步仓库存在：默认 ME-Data（私有），用户只填仓库名时自动挂到当前账号下（已存在则直接用）。
-     * 登录后与上传/下载前调用，用户无需手填 owner/ 前缀。配置里只保存仓库名。
-     */
+    /** 确保同步目标存在（登录后与上传/下载前调用），返回用于展示的目标名 */
     suspend fun ensureRepo(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
-        require(conf.pat.isNotBlank()) { "尚未登录 GitHub 账号" }
-        GitHubLogin.maybeRefresh(context, conf)
-
-        var login = conf.account
-        if (login.isBlank()) {
-            login = GitHubLogin.fetchAccountName(conf.pat)
-            conf.account = login
-        }
-        if (login.isBlank()) throw RuntimeException("无法获取 GitHub 用户名")
-
-        if (conf.repo.isBlank()) conf.repo = "ME-Data"
-        val name = conf.repo.substringAfter('/').ifBlank { "ME-Data" }
-
-        val payload = buildJsonObject {
-            put("name", name)
-            put("private", true)
-            put("auto_init", false)
-        }.toString()
-        try {
-            val req = Request.Builder().url("$API/user/repos")
-                .header("Authorization", "Bearer ${conf.pat}")
-                .header("Accept", "application/vnd.github+json")
-                .header("User-Agent", "ME-PE")
-                .post(payload.toRequestBody("application/json".toMediaType()))
-                .build()
-            http.newCall(req).execute().use { r ->
-                // 422 = 仓库已存在，直接使用
-                if (!r.isSuccessful && r.code != 422) {
-                    throw RuntimeException("创建仓库失败：" + describeError(r.code, r.body?.string() ?: ""))
-                }
-            }
-        } catch (e: RuntimeException) {
-            if (!e.message.orEmpty().contains("422")) throw e
-        }
-
-        if (conf.branch.isBlank()) conf.branch = "main"
-        SyncConfig.save(context, conf)
-        "$login/$name"
+        backendFor(conf).ensureReady(context)
     }
 
-    /** 把用户填的仓库名解析成 owner/name：只填 ME-Data 时自动补当前账号前缀 */
-    private suspend fun resolveRepo(context: Context): String = withContext(Dispatchers.IO) {
-        val conf = SyncConfig.load(context)
-        if (conf.repo.isBlank()) {
-            ensureRepo(context)
-            return@withContext resolveRepo(context)
-        }
-        if (conf.repo.contains('/')) return@withContext conf.repo
-        var login = conf.account
-        if (login.isBlank()) {
-            login = GitHubLogin.fetchAccountName(conf.pat)
-            conf.account = login
-            SyncConfig.save(context, conf)
-        }
-        "$login/${conf.repo}"
-    }
-
-    /** 上传 JsonData 全部文件到仓库 data/ 目录（逐文件 commit，已存在则带 sha 更新）。
-     *  防覆盖：若某文件云端 sha 与上次同步记录不一致（别的设备改过），跳过该文件并提示先下载。 */
+    /** 上传 JsonData 全部文件到云端（逐文件提交）。
+     *  防覆盖：若某文件云端版本与上次同步记录不一致（别的设备改过），跳过该文件并提示先下载。 */
     suspend fun push(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
-        require(conf.pat.isNotBlank()) { "请先登录 GitHub 账号或填写 Token" }
-        GitHubLogin.maybeRefresh(context, conf)
-        val repo = resolveRepo(context)
+        val backend = backendFor(conf)
+        if (conf.provider != "webdav" && conf.provider != "gitee") GitHubLogin.maybeRefresh(context, conf)
         val files = JsonStore.allFiles()
         if (files.isEmpty()) return@withContext "没有可上传的数据"
+        backend.ensureReady(context)
         var okCount = 0
         var skipped = 0
         var lastErr: String? = null
         val newShas = conf.fileShas.toMutableMap()
         for (f in files) {
             try {
-                val content = Base64.getEncoder().encodeToString(f.readText().toByteArray(Charsets.UTF_8))
-                // 查询已有文件 sha
-                var sha: String? = null
-                try {
-                    val existing = parseObj(httpCall(conf, "$API/repos/$repo/contents/data/${f.name}?ref=${conf.branch}", "GET", null))
-                    sha = (existing["sha"])?.toString()?.trim('"')
-                } catch (_: Exception) { /* 不存在则新建 */ }
-
+                val rev = backend.revOf(f.name)
                 // 云端被其它设备更新过而本地没有先下载 → 跳过，避免覆盖
                 val known = conf.fileShas[f.name]
-                if (known != null && sha != null && known != sha) {
+                if (known != null && rev != null && known != rev) {
                     skipped++
                     continue
                 }
-
-                val payload = buildJsonObject {
-                    put("message", "ME 数据同步（Android）· ${java.time.LocalDateTime.now()}")
-                    put("content", content)
-                    put("branch", conf.branch)
-                    if (sha != null) put("sha", sha)
-                }.toString()
-                val resp = parseObj(httpCall(conf, "$API/repos/$repo/contents/data/${f.name}", "PUT", payload))
-                (resp["content"] as? JsonObject)?.get("sha")?.toString()?.trim('"')?.let { newShas[f.name] = it }
+                val content = f.readText()
+                newShas[f.name] = backend.write(f.name, content, rev)
                 okCount++
             } catch (e: Exception) {
                 lastErr = e.message
@@ -291,26 +232,22 @@ object GitHubSync {
         else base
     }
 
-    /** 从仓库 data/ 目录下载并覆盖本地 JsonData（先做本地备份）。
-     *  每个文件优先用 raw 接口直接取文件原文（响应体即文件内容，不经 Base64 编解码，
-     *  规避移动网络下 Base64 传输损坏导致的 "Last unit does not have enough valid bits"）；
+    /** 从云端下载并覆盖本地 JsonData（先做本地备份）。
      *  写盘前校验是有效 JSON，损坏内容不会写进本地数据；单个文件失败不影响其它文件，
      *  失败的文件名与原因会列在结果里。 */
     suspend fun pull(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
-        require(conf.pat.isNotBlank()) { "请先登录 GitHub 账号或填写 Token" }
-        GitHubLogin.maybeRefresh(context, conf)
-        val repo = resolveRepo(context)
+        val backend = backendFor(conf)
+        if (conf.provider != "webdav" && conf.provider != "gitee") GitHubLogin.maybeRefresh(context, conf)
+        backend.ensureReady(context)
 
-        // 目录清单：一次拿到每个文件的名字、大小与 sha
-        val items: List<JsonObject> = try {
-            val text = httpGet(conf, "$API/repos/$repo/contents/data?ref=${conf.branch}", "application/vnd.github+json")
-            val el = JsonStore.json.parseToJsonElement(text)
-            (el as? kotlinx.serialization.json.JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
+        // 目录清单：一次拿到每个文件的名字、大小与版本标识
+        val items: List<RemoteFile> = try {
+            backend.list()
         } catch (e: Exception) {
             if (e.message?.contains("404") == true) emptyList() else throw e
         }
-        if (items.isEmpty()) return@withContext "仓库 data 目录为空，没有可下载的数据"
+        if (items.isEmpty()) return@withContext "同步目录为空，没有可下载的数据"
 
         // 本地备份
         val backupDir = File(context.filesDir, "JsonData_backup_${System.currentTimeMillis()}")
@@ -322,40 +259,21 @@ object GitHubSync {
         val failed = mutableListOf<String>()
         val newShas = conf.fileShas.toMutableMap()
         for (item in items) {
-            val name = item["name"]?.toString()?.trim('"') ?: continue
-            if (!name.endsWith(".json")) continue
-            val size = item["size"]?.toString()?.trim('"')?.toLongOrNull() ?: 0L
-            val sha = item["sha"]?.toString()?.trim('"')
             try {
-                // 首选 raw 方式：响应体就是文件内容本身，不经 Base64
-                var text: String? = try {
-                    val raw = httpGet(conf, "$API/repos/$repo/contents/data/$name?ref=${conf.branch}", "application/vnd.github.raw")
-                    if (raw.isNotEmpty() || size == 0L) raw else null
-                } catch (_: Exception) { null }
-
-                // 兜底：raw 拿不到时退回 JSON 接口 + Base64 解码
-                if (text == null) {
-                    val detail = parseObj(httpCall(conf, "$API/repos/$repo/contents/data/$name?ref=${conf.branch}", "GET", null))
-                    val content = (detail["content"] as? kotlinx.serialization.json.JsonPrimitive)
-                        ?.takeIf { it.isString }?.content ?: ""
-                    if (content.isNotBlank()) {
-                        text = String(Base64.getMimeDecoder().decode(content.replace("\n", "").replace("\r", "")), Charsets.UTF_8)
-                    }
-                }
-
-                val t = text
+                val r = backend.read(item.name)
+                val t = r?.first
                 if (t == null) {
-                    failed.add(name); lastErr = "文件内容为空"; continue
+                    failed.add(item.name); lastErr = "文件内容为空"; continue
                 }
                 // 校验是有效 JSON 再写入，防止把传输损坏的内容存成本地数据
                 try { JsonStore.json.parseToJsonElement(t) } catch (_: Exception) {
-                    failed.add(name); lastErr = "下载内容不是有效 JSON"; continue
+                    failed.add(item.name); lastErr = "下载内容不是有效 JSON"; continue
                 }
-                File(JsonStore.dir, name).writeText(t)
-                sha?.let { newShas[name] = it }
+                File(JsonStore.dir, item.name).writeText(t)
+                newShas[item.name] = item.rev.ifBlank { r.second ?: md5(t) }
                 n++
             } catch (e: Exception) {
-                failed.add(name)
+                failed.add(item.name)
                 lastErr = e.message
             }
         }
@@ -372,8 +290,274 @@ object GitHubSync {
 }
 
 /**
+ * GitHub / Gitee 的 Contents API 实现（两家接口结构一致，差别在域名、鉴权方式与错误文案）。
+ * 文件放在仓库 data/ 目录；版本标识 = 文件 blob sha。
+ */
+private class GitBackend(
+    private val conf: SyncConfig.Conf,
+    private val api: String,
+    private val label: String,
+    private val isGitee: Boolean,
+) : CloudBackend {
+
+    init {
+        if (isGitee) require(conf.giteePat.isNotBlank()) { "请先填写 Gitee 私人令牌" }
+        else require(conf.pat.isNotBlank()) { "请先登录 GitHub 账号或填写 Token" }
+    }
+
+    private val token = if (isGitee) conf.giteePat.trim() else conf.pat.trim()
+    private val branch get() = conf.branch.ifBlank { if (isGitee) "master" else "main" }
+
+    /** 统一错误文案：401 = 令牌在云端侧已失效（被撤销或过期），引导重新配置 */
+    private fun describeError(code: Int, text: String): String = when {
+        code == 401 && isGitee -> "Gitee 令牌已失效（被撤销或已过期），请在「设置 → 云同步」重新填写私人令牌"
+        code == 401 -> "GitHub 授权已失效（令牌被撤销或已过期），请重新授权登录一次即可恢复"
+        else -> "HTTP $code：${text.take(300)}"
+    }
+
+    private fun request(url: String, method: String, body: String?, accept: String = "application/vnd.github+json"): Request {
+        val b = Request.Builder()
+            .header("User-Agent", "ME-PE")
+            .header("Accept", accept)
+            .method(method, body?.toRequestBody("application/json".toMediaType()))
+        if (isGitee) b.url(if (url.contains('?')) "$url&access_token=${enc(token)}" else "$url?access_token=${enc(token)}")
+        else b.url(url).header("Authorization", "Bearer $token")
+        return b.build()
+    }
+
+    /** 发请求并返回原始响应体；非 2xx 抛异常 */
+    private fun call(url: String, method: String, body: String?, accept: String = "application/vnd.github+json"): String {
+        http.newCall(request(url, method, body, accept)).execute().use { r ->
+            val text = r.body?.string() ?: ""
+            if (!r.isSuccessful) throw RuntimeException(describeError(r.code, text))
+            return text
+        }
+    }
+
+    /** GET（可指定 Accept），失败自动重试一次：移动网络链路不稳，偶发响应不完整 */
+    private fun get(url: String, accept: String): String {
+        var last: Exception? = null
+        repeat(2) { attempt ->
+            try {
+                http.newCall(request(url, "GET", null, accept)).execute().use { r ->
+                    val text = r.body?.string() ?: ""
+                    if (!r.isSuccessful) throw RuntimeException(describeError(r.code, text))
+                    return text
+                }
+            } catch (e: Exception) {
+                last = e
+                if (attempt == 0) try { Thread.sleep(1200) } catch (_: InterruptedException) { }
+            }
+        }
+        throw last ?: RuntimeException("请求失败")
+    }
+
+    /** 纯仓库名（用户只填 name 时自动挂到自己账号下，配置里不存 owner/） */
+    private val repoName get() = conf.repo.substringAfter('/').ifBlank { "ME-Data" }
+    /** owner：用户填了 owner/name 就用填的，否则用当前登录账号 */
+    private val owner get() = if (conf.repo.contains('/')) conf.repo.substringBefore('/') else conf.account
+    private fun dataUrl(path: String) = "$api/repos/${enc(owner)}/$repoName/contents/$path"
+
+    override fun ensureReady(context: Context): String {
+        // 用户名：GitHub 用已缓存的 account，Gitee 每次登录后缓存到 giteeAccount
+        var login = if (isGitee) conf.giteeAccount else conf.account
+        if (login.isBlank()) {
+            login = if (isGitee) {
+                val o = parseObj(get("$GITEE_API/user", "application/json"))
+                (o["login"] ?: o["name"])?.toString()?.trim('"') ?: ""
+            } else {
+                // 与 GitHubLogin.fetchAccountName 相同的请求（此处非挂起上下文，直接发请求）
+                try {
+                    val req = Request.Builder().url("$api/user")
+                        .header("Authorization", "Bearer $token")
+                        .header("User-Agent", "ME-PE")
+                        .build()
+                    parseObj(http.newCall(req).execute().use { r ->
+                        if (!r.isSuccessful) "" else r.body?.string() ?: "{}"
+                    })["login"]?.toString()?.trim('"') ?: ""
+                } catch (_: Exception) { "" }
+            }
+            if (login.isBlank()) throw RuntimeException("无法获取 $label 用户名，请检查令牌权限")
+            if (isGitee) conf.giteeAccount = login else conf.account = login
+        }
+
+        if (conf.repo.isBlank()) conf.repo = "ME-Data"
+        val name = repoName
+
+        // 创建私有仓库（已存在则直接使用：GitHub 422；Gitee 400 且提示已存在）
+        val payload = buildJsonObject {
+            put("name", name)
+            put("private", true)
+            // Gitee 空仓库无法用 contents API 写入，auto_init 先生成一个提交（多一个 README 无影响）
+            put("auto_init", isGitee)
+        }.toString()
+        try {
+            call("$api/user/repos", "POST", payload, "application/json")
+        } catch (e: RuntimeException) {
+            val m = e.message.orEmpty()
+            val exists = m.contains("422") || m.contains("已存在") || m.contains("同名") ||
+                    m.contains("exist", ignoreCase = true) || m.contains("already")
+            if (!exists) throw e
+        }
+
+        if (isGitee) {
+            // Gitee 新仓库默认分支是 master
+            if (conf.branch.isBlank() || conf.branch.equals("main", ignoreCase = true)) conf.branch = "master"
+        } else if (conf.branch.isBlank()) {
+            conf.branch = "main"
+        }
+        SyncConfig.save(context, conf)
+        return "$login/$name"
+    }
+
+    override fun list(): List<RemoteFile> {
+        val text = get(dataUrl("data?ref=${enc(branch)}"), "application/vnd.github+json")
+        val el = JsonStore.json.parseToJsonElement(text)
+        return (el as? kotlinx.serialization.json.JsonArray)?.mapNotNull { it as? JsonObject }?.map { o ->
+            RemoteFile(
+                o["name"]?.toString()?.trim('"') ?: "",
+                o["size"]?.toString()?.trim('"')?.toLongOrNull() ?: 0L,
+                o["sha"]?.toString()?.trim('"') ?: "",
+            )
+        } ?: emptyList()
+    }
+
+    override fun read(name: String): Pair<String, String?>? {
+        // GitHub 首选 raw 方式：响应体就是文件内容本身，不经 Base64（移动网络下更不易损坏）；
+        // Gitee 的 contents 接口不支持 raw Accept（原样返回 JSON），直接走 JSON 接口 + Base64
+        var text: String? = if (!isGitee) try {
+            get(dataUrl("data/${enc(name)}?ref=${enc(branch)}"), "application/vnd.github.raw")
+        } catch (_: Exception) { null } else null
+        // 兜底（Gitee 的唯一路径）：JSON 接口 + Base64 解码
+        var rev: String? = null
+        if (text == null) {
+            val detail = parseObj(call(dataUrl("data/${enc(name)}?ref=${enc(branch)}"), "GET", null))
+            rev = detail["sha"]?.toString()?.trim('"')
+            val content = (detail["content"] as? kotlinx.serialization.json.JsonPrimitive)
+                ?.takeIf { it.isString }?.content ?: ""
+            if (content.isNotBlank()) {
+                text = String(Base64.getMimeDecoder().decode(content.replace("\n", "").replace("\r", "")), Charsets.UTF_8)
+            }
+        }
+        return text?.let { it to rev }
+    }
+
+    override fun revOf(name: String): String? = try {
+        parseObj(call(dataUrl("data/${enc(name)}?ref=${enc(branch)}"), "GET", null))["sha"]?.toString()?.trim('"')
+    } catch (_: Exception) { null } // 不存在则新建
+
+    override fun write(name: String, content: String, prevRev: String?): String {
+        val payload = buildJsonObject {
+            put("message", "ME 数据同步（Android）· ${java.time.LocalDateTime.now()}")
+            put("content", Base64.getEncoder().encodeToString(content.toByteArray(Charsets.UTF_8)))
+            put("branch", branch)
+            if (prevRev != null) put("sha", prevRev)
+        }.toString()
+        val resp = parseObj(call(dataUrl("data/${enc(name)}"), "PUT", payload))
+        return (resp["content"] as? JsonObject)?.get("sha")?.toString()?.trim('"') ?: ""
+    }
+}
+
+/**
+ * WebDAV 实现（坚果云 / Nextcloud / 群晖等任意 WebDAV 服务）。
+ * 没有 sha 概念，用文件内容的 md5 指纹当版本标识：上传前 GET 对比指纹即可发现
+ * 「云端被别的设备改过」，避免覆盖；目录用 PROPFIND 列举。
+ */
+private class WebDavBackend(private val conf: SyncConfig.Conf) : CloudBackend {
+
+    init {
+        require(conf.webdavUser.isNotBlank() && conf.webdavPass.isNotBlank()) { "请先填写 WebDAV 账号和密码" }
+    }
+
+    private val base = conf.webdavUrl.trim().ifBlank { "https://dav.jianguoyun.com/dav/" }.let {
+        if (it.endsWith("/")) it else "$it/"
+    }
+    private val folder get() = base + enc(conf.repo.ifBlank { "ME-Data" }) + "/"
+    private val authHeader = Credentials.basic(conf.webdavUser.trim(), conf.webdavPass.trim(), Charsets.UTF_8)
+
+    private fun describeError(code: Int, text: String): String = when {
+        code == 401 || code == 403 -> "WebDAV 账号或密码不正确（坚果云请用网页版「安全选项 → 添加应用密码」生成的密码，不能用登录密码）"
+        else -> "HTTP $code：${text.take(300)}"
+    }
+
+    private fun call(method: String, url: String, body: ByteArray?, contentType: String? = null): Pair<Int, String> {
+        val req = Request.Builder().url(url)
+            .header("Authorization", authHeader)
+            .header("User-Agent", "ME-PE")
+            .method(method, (body ?: ByteArray(0)).toRequestBody(contentType?.toMediaType()))
+            .build()
+        http.newCall(req).execute().use { r ->
+            val text = r.body?.string() ?: ""
+            return r.code to text
+        }
+    }
+
+    override fun ensureReady(context: Context): String {
+        if (conf.repo.isBlank()) conf.repo = "ME-Data"
+        // MKCOL 建目录：201 = 已创建，405/301 = 已存在，均可继续
+        val (code, text) = call("MKCOL", folder, null)
+        if (code != 201 && code != 405 && code != 301 && code != 200 && code != 409)
+            throw RuntimeException("创建 WebDAV 目录失败：" + describeError(code, text))
+        SyncConfig.save(context, conf)
+        return folder
+    }
+
+    override fun list(): List<RemoteFile> {
+        val (code, body) = call("PROPFIND", folder, "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:getcontentlength/></d:prop></d:propfind>".toByteArray(), "application/xml")
+        if (code == 404) return emptyList()
+        if (code !in 200..299 && code != 207) throw RuntimeException(describeError(code, body))
+
+        // 解析 multistatus XML：每个 <response> 里的 <href> 与 <getcontentlength>
+        val out = mutableListOf<RemoteFile>()
+        val parser = android.util.Xml.newPullParser()
+        parser.setInput(java.io.StringReader(body))
+        var curHref: String? = null
+        var curSize = 0L
+        var event = parser.eventType
+        while (event != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+            when (event) {
+                org.xmlpull.v1.XmlPullParser.START_TAG -> when (parser.name) {
+                    "response" -> { curHref = null; curSize = 0L }
+                    "href" -> { parser.next(); curHref = parser.text }
+                    "getcontentlength" -> try { parser.next(); curSize = parser.text?.toLongOrNull() ?: 0L } catch (_: Exception) { }
+                }
+                org.xmlpull.v1.XmlPullParser.END_TAG -> if (parser.name == "response" && curHref != null) {
+                    val href = curHref!!
+                    // 跳过目录本身（以 / 结尾）与子目录，只留 .json 文件
+                    if (!href.endsWith("/") && href.endsWith(".json")) {
+                        val name = URLDecoder.decode(href.substringAfterLast('/'), "UTF-8")
+                        out.add(RemoteFile(name, curSize, ""))
+                    }
+                }
+            }
+            event = parser.next()
+        }
+        return out
+    }
+
+    override fun read(name: String): Pair<String, String?>? {
+        val (code, body) = call("GET", folder + enc(name), null)
+        if (code == 404) return null
+        if (code !in 200..299) throw RuntimeException(describeError(code, body))
+        return body to md5(body)
+    }
+
+    override fun revOf(name: String): String? {
+        val r = read(name) ?: return null
+        return r.second
+    }
+
+    override fun write(name: String, content: String, prevRev: String?): String {
+        val (code, text) = call("PUT", folder + enc(name), content.toByteArray(Charsets.UTF_8), "application/json;charset=utf-8")
+        if (code !in 200..299 && code != 204) throw RuntimeException(describeError(code, text))
+        return md5(content)
+    }
+}
+
+/**
  * GitHub 设备码授权登录（与 PC 端同一 OAuth App）：
  * 应用显示一个 8 位代码 → 打开浏览器 github.com/login/device → 登录输入代码点 Authorize → 自动拿到 Token。
+ * 仅 GitHub 方式需要；Gitee 直接在设置里粘贴私人令牌，WebDAV 填账号密码。
  */
 object GitHubLogin {
     const val CLIENT_ID = "Ov23liBQpCTtMnMWyzsa"

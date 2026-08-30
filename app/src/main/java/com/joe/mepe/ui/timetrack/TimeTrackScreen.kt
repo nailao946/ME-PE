@@ -85,7 +85,7 @@ import com.joe.mepe.data.FocusSession
 import com.joe.mepe.data.Repos
 import com.joe.mepe.data.TimeRecord
 import com.joe.mepe.data.TimeTag
-import com.joe.mepe.ui.BarChart
+import com.joe.mepe.ui.LineChart
 import com.joe.mepe.ui.ColorDot
 import com.joe.mepe.ui.ColorPickerDialog
 import com.joe.mepe.ui.DonutChart
@@ -502,7 +502,8 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
                 item(key = "sec_week") { SectionLabelRow("近 7 日计时", null, null) }
                 item(key = "chart_week") {
                     SectionCard {
-                        BarChart(
+                        // 折线图（带 Y 轴刻度）：柱状图在每日时长接近时全是等高柱子看不出变化
+                        LineChart(
                             values = weekTotals,
                             labels = weekDays.map { "${it.monthValue}/${it.dayOfMonth}" },
                             modifier = Modifier.fillMaxWidth()
@@ -1051,7 +1052,8 @@ private fun TimeStatsSheet(onClose: () -> Unit, viewDate: LocalDate) {
 
             if (daily.any { it > 0 }) {
                 SectionCard(title = "近 14 天每日时长") {
-                    BarChart(daily, days14.map { "${it.monthValue}/${it.dayOfMonth}" })
+                    // 同近 7 日计时：改用折线图看趋势（等高柱子没有信息量）
+                    LineChart(daily, days14.map { "${it.monthValue}/${it.dayOfMonth}" })
                 }
             }
 

@@ -23,7 +23,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.joe.mepe.data.GitHubSync
+import com.joe.mepe.data.CloudSync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -58,13 +58,14 @@ object SyncStatusBus {
 suspend fun runFullSync(context: Context, toast: Boolean): String = withContext(Dispatchers.Default) {
     if (SyncStatusBus.state == SyncStatusBus.State.RUNNING) return@withContext SyncStatusBus.message
     SyncStatusBus.setRunning()
-    val pushMsg = try { GitHubSync.push(context) } catch (e: Exception) { "✗ 上传失败：" + (e.message ?: "网络异常") }
-    val pullMsg = try { GitHubSync.pull(context) } catch (e: Exception) { "✗ 下载失败：" + (e.message ?: "网络异常") }
+    val pushMsg = try { CloudSync.push(context) } catch (e: Exception) { "✗ 上传失败：" + (e.message ?: "网络异常") }
+    val pullMsg = try { CloudSync.pull(context) } catch (e: Exception) { "✗ 下载失败：" + (e.message ?: "网络异常") }
     fun ok(m: String) = m.startsWith("✓") || m.contains("没有可上传的数据") ||
             m.contains("没有可下载的数据") || m.contains("目录为空")
     val msg = when {
-        pushMsg.contains("请先登录") && pullMsg.contains("请先登录") ->
-            "✗ 请先在「设置 → 云同步」登录 GitHub 后再同步"
+        pushMsg.contains("请先登录") && pullMsg.contains("请先登录") ||
+                pushMsg.contains("请先填写") && pullMsg.contains("请先填写") ->
+            "✗ 请先在「设置 → 云同步」配置好同步账号（GitHub / Gitee / WebDAV）后再同步"
         ok(pushMsg) && ok(pullMsg) -> {
             val extra = listOf(pushMsg, pullMsg).filter { it.contains("已跳过") || it.contains("比本地新") }
             if (extra.isEmpty()) "✓ 同步完成" else "✓ 同步完成：" + extra.joinToString("；")

@@ -57,7 +57,7 @@ import androidx.core.content.FileProvider
 import com.joe.mepe.data.BackupManager
 import com.joe.mepe.data.DataBus
 import com.joe.mepe.data.GitHubLogin
-import com.joe.mepe.data.GitHubSync
+import com.joe.mepe.data.CloudSync
 import com.joe.mepe.data.UpdateChecker
 import com.joe.mepe.data.Repos
 import com.joe.mepe.data.SyncConfig
@@ -300,7 +300,12 @@ private fun SyncPage(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val rev = DataBus.rev
     val syncConf = remember(rev) { SyncConfig.load(ctx) }
+    var syncProvider by remember(syncConf.provider) { mutableStateOf(syncConf.provider.ifBlank { "github" }) }
     var syncPat by remember(syncConf.pat) { mutableStateOf(syncConf.pat) }
+    var syncGiteePat by remember(syncConf.giteePat) { mutableStateOf(syncConf.giteePat) }
+    var syncWebDavUrl by remember(syncConf.webdavUrl) { mutableStateOf(syncConf.webdavUrl) }
+    var syncWebDavUser by remember(syncConf.webdavUser) { mutableStateOf(syncConf.webdavUser) }
+    var syncWebDavPass by remember(syncConf.webdavPass) { mutableStateOf(syncConf.webdavPass) }
     var syncRepo by remember(syncConf.repo) { mutableStateOf(syncConf.repo.ifBlank { "ME-Data" }) }
     var syncBranch by remember(syncConf.branch) { mutableStateOf(syncConf.branch.ifBlank { "main" }) }
     var syncAuto by remember(syncConf.autoPush) { mutableStateOf(syncConf.autoPush) }
@@ -311,125 +316,186 @@ private fun SyncPage(onBack: () -> Unit) {
     var msg by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
+    /** 把页面上的输入写进配置：登录/上传/下载前都要先调用，云端操作读取的是落盘配置 */
+    fun saveConf() {
+        val c = SyncConfig.load(ctx).also {
+            it.provider = syncProvider
+            it.pat = syncPat.trim()
+            it.giteePat = syncGiteePat.trim()
+            it.webdavUrl = syncWebDavUrl.trim()
+            it.webdavUser = syncWebDavUser.trim()
+            it.webdavPass = syncWebDavPass.trim()
+            it.repo = syncRepo.trim()
+            it.branch = syncBranch.trim().ifBlank { if (syncProvider == "gitee") "master" else "main" }
+            it.autoPush = syncAuto
+        }
+        SyncConfig.save(ctx, c)
+    }
+
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader(title = "云同步", icon = Icons.Filled.CloudSync, subtitle = "GitHub 私有仓库 · PC ↔ 安卓互通", onBack = onBack)
+        ScreenHeader(title = "云同步", icon = Icons.Filled.CloudSync, subtitle = "GitHub / Gitee / WebDAV · PC ↔ 安卓互通", onBack = onBack)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            // 账号授权登录
-            SectionCard(title = "GitHub 账号") {
+            // 同步方式
+            SectionCard(title = "同步方式") {
+                Segmented(listOf("GitHub", "Gitee", "WebDAV"), when (syncProvider) { "gitee" -> 1; "webdav" -> 2; else -> 0 }) { idx ->
+                    syncProvider = when (idx) { 1 -> "gitee"; 2 -> "webdav"; else -> "github" }
+                }
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    if (syncConf.pat.isNotBlank())
-                        (if (syncConf.account.isNotBlank()) "已登录：${syncConf.account}" else "已登录 GitHub 账号")
-                    else "未登录 GitHub 账号",
-                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "跳转 GitHub 网页登录并点允许即可，自动获取 Token 并创建私有仓库 ME-Data，一次登录长期有效。",
+                    when (syncProvider) {
+                        "gitee" -> "Gitee（国内直连快）：到 gitee.com → 设置 → 安全设置 → 私人令牌 生成令牌（勾选 projects 与 user_info），粘贴到下方即可。"
+                        "webdav" -> "WebDAV（坚果云 / Nextcloud / 群晖等）：坚果云在网页版「账户信息 → 安全选项 → 添加应用密码」生成密码，注意不能用登录密码。"
+                        else -> "GitHub（推荐）：跳转 GitHub 网页点一次授权即可，自动创建私有仓库 ME-Data，一次登录长期有效。"
+                    },
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(10.dp))
-                Button(
-                    onClick = {
-                        loggingIn = true
-                        pendingCode = ""
-                        loginMsg = "正在请求授权码…"
-                        scope.launch {
-                            try {
-                                val s = GitHubLogin.start()
-                                pendingCode = s.userCode
-                                try {
-                                    copyText(ctx, s.userCode)
-                                    Toast.makeText(ctx, "授权码 ${s.userCode} 已复制到剪贴板", Toast.LENGTH_LONG).show()
-                                } catch (_: Exception) { }
-                                loginMsg = "浏览器即将打开，登录 GitHub 后粘贴授权码 ${s.userCode}，点 Authorize 授权…"
-                                try {
-                                    ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(s.verifyUrl)))
-                                } catch (_: Exception) { }
-                                var result: String? = null
-                                var failures = 0
-                                while (isActive) {
-                                    // 比要求的最小间隔多留 2 秒余量（网络往返有抖动，掐得太准会被 GitHub 判定轮询过快触发 slow_down 限流）；
-                                    // 网络异常后额外多等 3 秒再重试，给网络恢复留时间
-                                    kotlinx.coroutines.delay(s.interval * 1000L + 2000L + (if (failures > 0) 3000L else 0L))
-                                    result = try {
-                                        val r = GitHubLogin.poll(s)
-                                        if (failures > 0) loginMsg = "网络已恢复，继续等待授权…"
-                                        failures = 0
-                                        r
-                                    } catch (_: Exception) {
-                                        // 网络抖动/切后台导致的解析失败不打死流程，静默重试直到授权码过期
-                                        failures++
-                                        if (failures == 3) loginMsg = "网络不稳定（域名解析失败），正在自动重试，请保持网络畅通…"
-                                        null
-                                    }
-                                    if (result != null) break
-                                    if (failures >= 30) { result = "!无法连接 GitHub：域名持续解析失败，请检查网络或换一个网络（如手机热点）后重试"; break }
-                                    if (System.currentTimeMillis() > s.expiresAt) { result = "!授权超时，请重试"; break }
-                                }
-                                val r = result ?: "!授权超时"
-                                if (r.startsWith("!")) {
-                                    loginMsg = r
-                                } else {
-                                    // 先立即落盘 token——拉取用户名（api.github.com）可能很慢甚至超时，不能拖住登录完成
-                                    val fresh = SyncConfig.load(ctx)
-                                    fresh.pat = r
-                                    fresh.refreshToken = s.refreshToken
-                                    fresh.tokenExpiresAt = s.tokenExpiresAt
-                                    SyncConfig.save(ctx, fresh)
-                                    syncPat = r
-                                    loginMsg = "✓ 授权成功，正在自动创建同步仓库 ME-Data…"
-                                    loginMsg = try {
-                                        val repo = GitHubSync.ensureRepo(ctx)
-                                        "✓ 授权成功，已配置仓库 $repo，可直接上传/下载"
-                                    } catch (e: Exception) {
-                                        "✓ 授权成功，但自动建仓失败：${e.message}（可手动填仓库名）"
-                                    }
-                                    // 账号名仅用于显示，后台补拉，失败不影响登录
-                                    val acc = GitHubLogin.fetchAccountName(r)
-                                    if (acc.isNotBlank()) {
-                                        val f2 = SyncConfig.load(ctx)
-                                        f2.account = acc
-                                        SyncConfig.save(ctx, f2)
-                                        DataBus.bump()   // 刷新页面上的「已登录」显示
-                                    }
-                                }
-                            } catch (e: java.net.UnknownHostException) {
-                                loginMsg = "✗ 无法连接 GitHub：域名解析失败。请检查网络，或换一个网络（如手机热点）后重试"
-                            } catch (e: Exception) {
-                                loginMsg = "✗ ${e.message}"
-                            }
-                            loggingIn = false
-                        }
-                    },
-                    enabled = !loggingIn,
-                    shape = MaterialTheme.shapes.small
-                ) { Text(if (loggingIn) "等待授权…" else "账号授权登录") }
-                if (loggingIn && pendingCode.isNotBlank()) {
-                    TextButton(onClick = {
-                        try {
-                            copyText(ctx, pendingCode)
-                            Toast.makeText(ctx, "授权码 $pendingCode 已复制到剪贴板", Toast.LENGTH_SHORT).show()
-                        } catch (_: Exception) { }
-                    }) { Text("再次复制授权码 $pendingCode") }
+            }
+
+            // 账号配置（按所选同步方式显示对应表单）
+            when (syncProvider) {
+                "gitee" -> SectionCard(title = "Gitee 账号") {
+                    if (syncConf.giteeAccount.isNotBlank())
+                        Text("已配置：${syncConf.giteeAccount}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    LabeledField("私人令牌", syncGiteePat, { syncGiteePat = it }, placeholder = "gitee.com → 设置 → 私人令牌")
                 }
-                if (loginMsg.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(loginMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                "webdav" -> SectionCard(title = "WebDAV 账号") {
+                    LabeledField("服务器地址", syncWebDavUrl, { syncWebDavUrl = it }, placeholder = "https://dav.jianguoyun.com/dav/")
+                    Spacer(Modifier.height(8.dp))
+                    LabeledField("账号", syncWebDavUser, { syncWebDavUser = it }, placeholder = "坚果云为注册手机号/邮箱")
+                    Spacer(Modifier.height(8.dp))
+                    LabeledField("密码 / 应用密码", syncWebDavPass, { syncWebDavPass = it })
+                }
+                else -> SectionCard(title = "GitHub 账号") {
+                    Text(
+                        if (syncConf.pat.isNotBlank())
+                            (if (syncConf.account.isNotBlank()) "已登录：${syncConf.account}" else "已登录 GitHub 账号")
+                        else "未登录 GitHub 账号",
+                        style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "跳转 GitHub 网页登录并点允许即可，自动获取 Token 并创建私有仓库 ME-Data，一次登录长期有效。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = {
+                            // 先把当前页面配置落盘，保证授权成功后自动建仓走的是 GitHub 方式
+                            saveConf()
+                            loggingIn = true
+                            pendingCode = ""
+                            loginMsg = "正在请求授权码…"
+                            scope.launch {
+                                try {
+                                    val s = GitHubLogin.start()
+                                    pendingCode = s.userCode
+                                    try {
+                                        copyText(ctx, s.userCode)
+                                        Toast.makeText(ctx, "授权码 ${s.userCode} 已复制到剪贴板", Toast.LENGTH_LONG).show()
+                                    } catch (_: Exception) { }
+                                    loginMsg = "浏览器即将打开，登录 GitHub 后粘贴授权码 ${s.userCode}，点 Authorize 授权…"
+                                    try {
+                                        ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(s.verifyUrl)))
+                                    } catch (_: Exception) { }
+                                    var result: String? = null
+                                    var failures = 0
+                                    while (isActive) {
+                                        // 比要求的最小间隔多留 2 秒余量（网络往返有抖动，掐得太准会被 GitHub 判定轮询过快触发 slow_down 限流）；
+                                        // 网络异常后额外多等 3 秒再重试，给网络恢复留时间
+                                        kotlinx.coroutines.delay(s.interval * 1000L + 2000L + (if (failures > 0) 3000L else 0L))
+                                        result = try {
+                                            val r = GitHubLogin.poll(s)
+                                            if (failures > 0) loginMsg = "网络已恢复，继续等待授权…"
+                                            failures = 0
+                                            r
+                                        } catch (_: Exception) {
+                                            // 网络抖动/切后台导致的解析失败不打死流程，静默重试直到授权码过期
+                                            failures++
+                                            if (failures == 3) loginMsg = "网络不稳定（域名解析失败），正在自动重试，请保持网络畅通…"
+                                            null
+                                        }
+                                        if (result != null) break
+                                        if (failures >= 30) { result = "!无法连接 GitHub：域名持续解析失败，请检查网络或换一个网络（如手机热点）后重试"; break }
+                                        if (System.currentTimeMillis() > s.expiresAt) { result = "!授权超时，请重试"; break }
+                                    }
+                                    val r = result ?: "!授权超时"
+                                    if (r.startsWith("!")) {
+                                        loginMsg = r
+                                    } else {
+                                        // 先立即落盘 token——拉取用户名（api.github.com）可能很慢甚至超时，不能拖住登录完成
+                                        val fresh = SyncConfig.load(ctx)
+                                        fresh.pat = r
+                                        fresh.refreshToken = s.refreshToken
+                                        fresh.tokenExpiresAt = s.tokenExpiresAt
+                                        SyncConfig.save(ctx, fresh)
+                                        syncPat = r
+                                        loginMsg = "✓ 授权成功，正在自动创建同步仓库 ME-Data…"
+                                        loginMsg = try {
+                                            val repo = CloudSync.ensureRepo(ctx)
+                                            "✓ 授权成功，已配置仓库 $repo，可直接上传/下载"
+                                        } catch (e: Exception) {
+                                            "✓ 授权成功，但自动建仓失败：${e.message}（可手动填仓库名）"
+                                        }
+                                        // 账号名仅用于显示，后台补拉，失败不影响登录
+                                        val acc = GitHubLogin.fetchAccountName(r)
+                                        if (acc.isNotBlank()) {
+                                            val f2 = SyncConfig.load(ctx)
+                                            f2.account = acc
+                                            SyncConfig.save(ctx, f2)
+                                            DataBus.bump()   // 刷新页面上的「已登录」显示
+                                        }
+                                    }
+                                } catch (e: java.net.UnknownHostException) {
+                                    loginMsg = "✗ 无法连接 GitHub：域名解析失败。请检查网络，或换一个网络（如手机热点）后重试"
+                                } catch (e: Exception) {
+                                    loginMsg = "✗ ${e.message}"
+                                }
+                                loggingIn = false
+                            }
+                        },
+                        enabled = !loggingIn,
+                        shape = MaterialTheme.shapes.small
+                    ) { Text(if (loggingIn) "等待授权…" else "账号授权登录") }
+                    if (loggingIn && pendingCode.isNotBlank()) {
+                        TextButton(onClick = {
+                            try {
+                                copyText(ctx, pendingCode)
+                                Toast.makeText(ctx, "授权码 $pendingCode 已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                            } catch (_: Exception) { }
+                        }) { Text("再次复制授权码 $pendingCode") }
+                    }
+                    if (loginMsg.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(loginMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
 
             // 同步设置
             SectionCard(title = "同步设置") {
-                LabeledField("仓库名", syncRepo, { syncRepo = it }, placeholder = "ME-Data")
+                LabeledField(if (syncProvider == "webdav") "文件夹名" else "仓库名", syncRepo, { syncRepo = it }, placeholder = "ME-Data")
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "只填仓库名即可：自动创建私有仓库并挂到你的账号下，无需填 owner/",
+                    when (syncProvider) {
+                        "webdav" -> "云盘里存放数据的文件夹名，默认 ME-Data，一般不用改"
+                        "gitee" -> "只填仓库名即可：自动创建私有仓库并挂到你的账号下，无需填 owner/"
+                        else -> "只填仓库名即可：自动创建私有仓库并挂到你的账号下，无需填 owner/"
+                    },
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(8.dp))
-                LabeledField("分支", syncBranch, { syncBranch = it }, placeholder = "main")
-                Spacer(Modifier.height(8.dp))
-                LabeledField("GitHub Token（PAT，可选）", syncPat, { syncPat = it }, placeholder = "已登录可留空")
+                if (syncProvider != "webdav") {
+                    Spacer(Modifier.height(8.dp))
+                    LabeledField("分支", syncBranch, { syncBranch = it }, placeholder = if (syncProvider == "gitee") "master" else "main")
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "GitHub 默认 main，Gitee 默认 master；切换同步方式后如上传报分支错误，改成对应默认分支即可",
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (syncProvider == "github") {
+                    Spacer(Modifier.height(8.dp))
+                    LabeledField("GitHub Token（PAT，可选）", syncPat, { syncPat = it }, placeholder = "已登录可留空")
+                }
                 Spacer(Modifier.height(8.dp))
                 ToggleRow("自动上传", syncAuto, { syncAuto = it }, sub = "每次修改数据后自动推送到仓库")
                 if (syncConf.lastPushAt.isNotBlank())
@@ -452,13 +518,9 @@ private fun SyncPage(onBack: () -> Unit) {
                         onClick = {
                             syncing = true
                             scope.launch {
-                                val c = SyncConfig.load(ctx).also {
-                                    it.pat = syncPat.trim(); it.repo = syncRepo.trim()
-                                    it.branch = syncBranch.trim().ifBlank { "main" }; it.autoPush = syncAuto
-                                }
-                                SyncConfig.save(ctx, c)
+                                saveConf()
                                 SyncStatusBus.setRunning("正在上传…")
-                                msg = try { GitHubSync.push(ctx) } catch (e: Exception) { "✗ 上传失败：" + (e.message ?: "网络异常") }
+                                msg = try { CloudSync.push(ctx) } catch (e: Exception) { "✗ 上传失败：" + (e.message ?: "网络异常") }
                                 SyncStatusBus.report(msg)
                                 syncing = false
                             }
@@ -470,13 +532,9 @@ private fun SyncPage(onBack: () -> Unit) {
                         onClick = {
                             syncing = true
                             scope.launch {
-                                val c = SyncConfig.load(ctx).also {
-                                    it.pat = syncPat.trim(); it.repo = syncRepo.trim()
-                                    it.branch = syncBranch.trim().ifBlank { "main" }; it.autoPush = syncAuto
-                                }
-                                SyncConfig.save(ctx, c)
+                                saveConf()
                                 SyncStatusBus.setRunning("正在下载…")
-                                msg = try { GitHubSync.pull(ctx) } catch (e: Exception) { "✗ 下载失败：" + (e.message ?: "网络异常") }
+                                msg = try { CloudSync.pull(ctx) } catch (e: Exception) { "✗ 下载失败：" + (e.message ?: "网络异常") }
                                 SyncStatusBus.report(msg)
                                 syncing = false
                             }
@@ -558,6 +616,11 @@ private fun BackupPage(onBack: () -> Unit) {
 @Composable
 private fun AiPage(onBack: () -> Unit) {
     val rev = DataBus.rev
+    // 在 AiPage 作用域按 rev 缓存供应商列表：rev 变化（增删/设默认）时拿到新列表实例，
+    // 下面的 SectionCard 内容 lambda 因捕获了它必然重组——之前把读取写在 SectionCard 内部，
+    // lambda 没有任何状态捕获被复用，删除后界面不刷新，要退出页面重进才能看到
+    val providers = remember(rev) { Repos.aiProviders() }
+    var deleteTarget by remember { mutableStateOf<com.joe.mepe.data.AiProvider?>(null) }
     var aiName by remember { mutableStateOf("") }
     var aiKey by remember { mutableStateOf("") }
     var aiUrl by remember { mutableStateOf("https://api.deepseek.com") }
@@ -569,7 +632,6 @@ private fun AiPage(onBack: () -> Unit) {
         ScreenHeader(title = "AI 分析", icon = Icons.Filled.SmartToy, subtitle = "OpenAI / Anthropic 供应商", onBack = onBack)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             SectionCard(title = "供应商") {
-                val providers = Repos.aiProviders()
                 if (providers.isEmpty()) {
                     Text("还没有供应商，添加一个即可在健康 → 对比 使用 AI 分析",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -586,7 +648,7 @@ private fun AiPage(onBack: () -> Unit) {
                             if (!p.isDefault) TextButton(onClick = {
                                 Repos.saveAiProviders(providers.map { it.copy(isDefault = it.id == p.id) })
                             }) { Text("设为默认") }
-                            TextButton(onClick = { Repos.saveAiProviders(providers.filterNot { it.id == p.id }) }) {
+                            TextButton(onClick = { deleteTarget = p }) {
                                 Text("删除", color = MaterialTheme.colorScheme.error)
                             }
                         }
@@ -633,6 +695,19 @@ private fun AiPage(onBack: () -> Unit) {
             }
             Spacer(Modifier.height(24.dp))
         }
+    }
+
+    // 删除供应商二次确认（防误触）
+    deleteTarget?.let { target ->
+        ConfirmDialog(
+            "删除供应商",
+            "确定删除「${target.name}」吗？删除后使用它的 AI 分析将不可用。",
+            {
+                Repos.saveAiProviders(providers.filterNot { it.id == target.id })
+                deleteTarget = null
+            },
+            { deleteTarget = null }
+        )
     }
 }
 
@@ -823,7 +898,7 @@ private fun AboutPage(onBack: () -> Unit) {
                                 submitting = true; error = null
                                 scope.launch {
                                     try {
-                                        val n = GitHubSync.submitFeedback(ctx, text)
+                                        val n = CloudSync.submitFeedback(ctx, text)
                                         showFeedback = false
                                         Toast.makeText(ctx, "已提交 Issue #$n，感谢反馈！", Toast.LENGTH_LONG).show()
                                     } catch (e: Exception) {
