@@ -101,6 +101,38 @@ object TaskLogic {
         return if (need != null) done >= need else done > 0
     }
 
+    // ============ 统计口径（定期盘点：完成任务 / 总任务数，按天计） ============
+
+    /** 是否计入"完成任务/总任务数"：子任务不计；未设每日目标的量化任务不计 */
+    fun countedForStats(t: TaskItem): Boolean =
+        !t.isDeleted && t.parentTaskId == null &&
+            !(t.type == TaskTypes.QUANTITATIVE && (t.quantitativeDailyMin ?: 0.0) <= 0.0)
+
+    /** 某日是否计入总任务数（该日应做的任务；已达总目标的量化任务只算到达标当天） */
+    fun dueOnDate(t: TaskItem, d: LocalDate): Boolean {
+        if (!countedForStats(t)) return false
+        if (t.type == TaskTypes.QUANTITATIVE) {
+            val target = t.quantitativeTarget
+            if (target != null && target > 0 && (t.quantitativeCurrent ?: 0.0) >= target) {
+                val doneDay = t.completedAt?.toLocalDate() ?: return false
+                if (d.isAfter(doneDay)) return false
+            }
+        }
+        return occursOnDate(t, d)
+    }
+
+    /** 某日是否算"完成"：一次性=完成当天；周期/循环=当日打卡记录（含自定义次数）；量化=当日打卡记录或达标当天 */
+    fun doneOnDate(t: TaskItem, d: LocalDate, completions: List<TaskCompletionRecord>): Boolean {
+        if (!countedForStats(t)) return false
+        return when (t.type) {
+            TaskTypes.ONE_TIME -> t.completedAt?.toLocalDate() == d
+            TaskTypes.QUANTITATIVE ->
+                completions.any { it.taskId == t.id && it.date == d.toString() } ||
+                    t.completedAt?.toLocalDate() == d
+            else -> isDoneOn(t, d, completions)
+        }
+    }
+
     /** 点击打卡 / 取消打卡 */
     fun toggleDone(t: TaskItem, date: LocalDate) {
         val completions = Repos.completions()

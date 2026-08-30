@@ -219,9 +219,9 @@ fun StatRow(items: List<Triple<String, String, Color?>>) {
     }
 }
 
-/** 单行统计（兼容保留） */
+/** 单行统计（兼容保留）；trend 非 null 时在下方显示"较上期/较昨日"涨跌（绿涨红跌） */
 @Composable
-fun StatChip(label: String, value: String, modifier: Modifier = Modifier) {
+fun StatChip(label: String, value: String, modifier: Modifier = Modifier, trend: String? = null, trendUp: Boolean = true) {
     Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.small,
@@ -231,6 +231,11 @@ fun StatChip(label: String, value: String, modifier: Modifier = Modifier) {
             Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary)
             Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (trend != null) Text(
+                trend,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (trendUp) Color(0xFF34C759) else Color(0xFFFF3B30)
+            )
         }
     }
 }

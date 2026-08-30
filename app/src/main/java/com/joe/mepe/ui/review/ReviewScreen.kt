@@ -60,14 +60,30 @@ fun ReviewScreen(nav: (String) -> Unit) {
     else today.withDayOfMonth(1) to today
 
     val days = generateSequence(start) { it.plusDays(1) }.takeWhile { !it.isAfter(end) }.toList()
-    val rates = days.map { d ->
-        val due = tasks.filter { TaskLogic.occursOnDate(it, d) }
-        if (due.isEmpty()) -1.0
-        else due.count { TaskLogic.isDoneOn(it, d, completions) }.toDouble() / due.size
-    }
-    val validRates = rates.filter { it >= 0 }
+    // 统计口径（与桌面端一致）：总任务数=当日应做的任务（子任务、未设每日目标的量化、非当日循环任务不计）；
+    // 完成=当日完成（量化=当日打卡/达标，一次性=完成当天，周期=当日打卡记录）
+    val duePerDay = days.map { d -> tasks.count { TaskLogic.dueOnDate(it, d) } }
+    val donePerDay = days.map { d -> tasks.count { TaskLogic.doneOnDate(it, d, completions) } }
+    val totalDue = duePerDay.sum()
+    val doneTotal = donePerDay.sum()
+    val validRates = days.indices.mapNotNull { i -> if (duePerDay[i] > 0) donePerDay[i].toDouble() / duePerDay[i] else null }
     val avgRate = if (validRates.isEmpty()) null else validRates.average()
-    val doneCount = days.sumOf { d -> tasks.count { TaskLogic.isDoneOn(it, d, completions) } }
+
+    // 较上期：周盘点比上周，月盘点比上个月
+    val prevStart = if (mode == 0) start.minusDays(7) else start.minusMonths(1)
+    val prevEnd = start.minusDays(1)
+    val prevDays = generateSequence(prevStart) { it.plusDays(1) }.takeWhile { !it.isAfter(prevEnd) }.toList()
+    val prevTotal = prevDays.sumOf { d -> tasks.count { TaskLogic.dueOnDate(it, d) } }
+    val prevDone = prevDays.sumOf { d -> tasks.count { TaskLogic.doneOnDate(it, d, completions) } }
+    val prevRate = if (prevTotal > 0) prevDone.toDouble() / prevTotal else null
+    val rateTrend = if (avgRate != null && prevRate != null) {
+        val diff = Math.round((avgRate - prevRate) * 100)
+        "较上期${if (diff >= 0) "+" else ""}$diff%" to (diff >= 0)
+    } else null
+    val doneTrend = if (prevTotal > 0 || totalDue > 0) {
+        val diff = doneTotal - prevDone
+        "较上期${if (diff >= 0) "+" else ""}$diff" to (diff >= 0)
+    } else null
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         ScreenHeader(
@@ -82,15 +98,20 @@ fun ReviewScreen(nav: (String) -> Unit) {
         Spacer(Modifier.height(8.dp))
 
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatChip("完成率", avgRate?.let { "${(it * 100).toInt()}%" } ?: "—", Modifier.weight(1f))
-            StatChip("完成任务", "$doneCount 个", Modifier.weight(1f))
+            StatChip("完成率", avgRate?.let { "${(it * 100).toInt()}%" } ?: "—", Modifier.weight(1f),
+                trend = rateTrend?.first, trendUp = rateTrend?.second ?: true)
+            StatChip("完成任务", "$doneTotal / $totalDue 个", Modifier.weight(1f),
+                trend = doneTrend?.first, trendUp = doneTrend?.second ?: true)
             StatChip("活跃天数", "${validRates.size} 天", Modifier.weight(1f))
         }
         Spacer(Modifier.height(8.dp))
 
         SectionCard(title = "每日完成率趋势") {
             if (validRates.isEmpty()) EmptyHint("此范围没有任务")
-            else BarChart(rates.map { if (it < 0) 0.0 else it * 100 }, days.map { "${it.dayOfMonth}" })
+            else BarChart(
+                days.indices.map { i -> if (duePerDay[i] == 0) 0.0 else donePerDay[i] * 100.0 / duePerDay[i] },
+                days.map { "${it.dayOfMonth}" }
+            )
         }
 
         SectionCard(title = "目标进度") {
@@ -199,12 +220,32 @@ private fun TimeStatsCard(mode: Int, start: LocalDate, end: LocalDate) {
         .sortedByDescending { it.second }
     val total = perTag.sumOf { it.second }
 
+    // 较上期：今日比昨天、本周比上周、本月比上月（全部不比）
+    val prevRange: Pair<LocalDate, LocalDate>? = when (span) {
+        0 -> today.minusDays(1) to today.minusDays(1)
+        1 -> today.with(java.time.DayOfWeek.MONDAY).minusDays(7) to today.with(java.time.DayOfWeek.MONDAY).minusDays(1)
+        2 -> today.withDayOfMonth(1).minusMonths(1) to today.withDayOfMonth(1).minusDays(1)
+        else -> null
+    }
+    val prevTotalMin = prevRange?.let { (ps, pe) ->
+        records.filter { r ->
+            val d = try { LocalDate.parse(r.date) } catch (_: Exception) { return@filter false }
+            !d.isBefore(ps) && !d.isAfter(pe)
+        }.sumOf { it.minutes() }
+    } ?: 0
+    val timeTrend = if (prevRange != null && (prevTotalMin > 0 || total > 0)) {
+        val diff = total - prevTotalMin
+        val cmp = if (span == 0) "较昨日" else "较上期"
+        "$cmp${if (diff >= 0) "+" else "-"}${com.joe.mepe.ui.timetrack.fmtMinutes(kotlin.math.abs(diff))}" to (diff >= 0)
+    } else null
+
     SectionCard(title = "时间统计") {
         com.joe.mepe.ui.Segmented(listOf("今日", "本周", "本月", "全部"), span) { span = it }
         Spacer(Modifier.height(10.dp))
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            com.joe.mepe.ui.StatChip("总计时长", com.joe.mepe.ui.timetrack.fmtMinutes(total), Modifier.weight(1f))
+            com.joe.mepe.ui.StatChip("总计时长", com.joe.mepe.ui.timetrack.fmtMinutes(total), Modifier.weight(1f),
+                trend = timeTrend?.first, trendUp = timeTrend?.second ?: true)
             com.joe.mepe.ui.StatChip("计时记录", "${inRange.size} 条", Modifier.weight(1f))
         }
         Spacer(Modifier.height(10.dp))
@@ -243,12 +284,26 @@ private fun TimeStatsCard(mode: Int, start: LocalDate, end: LocalDate) {
         }
 
         Spacer(Modifier.height(8.dp))
-        val days14 = (13 downTo 0).map { today.minusDays(it.toLong()) }
-        val daily = days14.map { d -> records.filter { it.date == d.toString() }.sumOf { it.minutes() }.toDouble() }
-        if (daily.any { it > 0 }) {
-            Text("近 14 天每日时长", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(6.dp))
-            BarChart(daily, days14.map { "${it.monthValue}/${it.dayOfMonth}" })
+        if (span == 3) {
+            // 全部：近 12 个月每月时长，月度对比（按天太密看不清）
+            val months = (11 downTo 0).map { today.minusMonths(it.toLong()).withDayOfMonth(1) }
+            val monthly = months.map { m ->
+                val key = m.year.toString() + "-" + m.monthValue.toString().padStart(2, '0')
+                records.filter { it.date.take(7) == key }.sumOf { it.minutes() }.toDouble()
+            }
+            if (monthly.any { it > 0 }) {
+                Text("近 12 个月每月时长", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                BarChart(monthly, months.map { "${it.year.toString().takeLast(2)}/${it.monthValue.toString().padStart(2, '0')}" })
+            }
+        } else {
+            val days14 = (13 downTo 0).map { today.minusDays(it.toLong()) }
+            val daily = days14.map { d -> records.filter { it.date == d.toString() }.sumOf { it.minutes() }.toDouble() }
+            if (daily.any { it > 0 }) {
+                Text("近 14 天每日时长", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                BarChart(daily, days14.map { "${it.monthValue}/${it.dayOfMonth}" })
+            }
         }
     }
 }

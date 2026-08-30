@@ -1110,10 +1110,10 @@ private fun fmtNum(d: Double): String =
 
 // ============ 打卡图（近 15 周热力格） ============
 
-/** 打卡图的单日完成判定（与列表展示口径一致）：一次性/周期=完成当天；循环=当日打卡记录；量化=当日打卡记录或达标当天 */
+/** 打卡图的单日完成判定（按天计，与定期盘点口径一致）：一次性=完成当天；周期/循环=当日打卡记录；量化=当日打卡记录或达标当天 */
 private fun doneOnDay(t: TaskItem, d: LocalDate, completions: List<com.joe.mepe.data.TaskCompletionRecord>): Boolean =
     when (t.type) {
-        TaskTypes.ONE_TIME, TaskTypes.PERIODIC -> t.completedAt?.toLocalDate() == d
+        TaskTypes.ONE_TIME -> t.completedAt?.toLocalDate() == d
         TaskTypes.QUANTITATIVE ->
             completions.any { it.taskId == t.id && it.date == d.toString() } ||
                 t.completedAt?.toLocalDate() == d
