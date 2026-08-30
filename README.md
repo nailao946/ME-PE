@@ -1,6 +1,23 @@
-# ME（Android 版）
+<div align="center">
 
-**ME** 的 Android 版本 —— 个人管理系统（目标 · 任务 · 时间 · 健康），纯本地存储，与 Windows 桌面版（WPF）数据格式完全兼容。
+# ME for Android — 个人管理系统（移动端）
+
+**简体中文** | [English](README_EN.md)
+
+**ME** 的 Android 版本 —— 个人管理系统（目标 · 任务 · 时间 · 健康），纯本地存储，与 Windows 桌面版（WPF）数据格式完全兼容，支持云同步互通。
+
+[![Release](https://img.shields.io/github/v/release/nailao946/ME-PE)](https://github.com/nailao946/ME-PE/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/nailao946/ME-PE/total)](https://github.com/nailao946/ME-PE/releases/latest)
+![Platform](https://img.shields.io/badge/Platform-Android%208.0%2B-green)
+![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-orange)
+![License](https://img.shields.io/badge/License-MIT-green)
+[![Stars](https://img.shields.io/github/stars/nailao946/ME-PE?style=social)](https://github.com/nailao946/ME-PE/stargazers)
+
+**⬇️ [下载最新 APK](https://github.com/nailao946/ME-PE/releases/latest)** · 💻 [Windows 桌面版](https://github.com/nailao946/ME)
+
+</div>
+
+---
 
 ## 功能（与桌面版对齐）
 
@@ -384,5 +401,11 @@ app/src/main/java/com/joe/mepe/
 - **喝水目标与桌面端统一**：手机端改用与 PC 相同的 HealthWaterGoal 设置键，双端同步互通——电脑上改了喝水目标，手机下载后即生效；手机上改了，上传后电脑也生效
   - 本机旧的 water_goal 键在首次打开健康页/目标设置时自动迁移为新键并清除，数值不丢
   - 番茄钟 6 项设置与统计标签范围此前已与 PC 共用同一套键，同为双端互通
-- 明确同步范围与备份一致：任务/子任务、完成记录、目标、任务标签（含颜色）、时间标签（含颜色）、时间统计、健康记录、喝水容器、用药、运动项目、复盘、设置共 15 个文件全部双向同步；PC 专属配置（AI 接口/自定义仪表盘/自定义模块）手机原样搬运不丢失
+  - 明确同步范围与备份一致：任务/子任务、完成记录、目标、任务标签（含颜色）、时间标签（含颜色）、时间统计、健康记录、喝水容器、用药、运动项目、复盘、设置共 15 个文件全部双向同步；PC 专属配置（AI 接口/自定义仪表盘/自定义模块）手机原样搬运不丢失
+
+---
+
+## License
+
+MIT（完整文本见 [LICENSE](LICENSE)）
 
