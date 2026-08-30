@@ -78,6 +78,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.joe.mepe.data.DataBus
 import com.joe.mepe.data.Goal
 import com.joe.mepe.data.GoalTag
@@ -125,6 +126,7 @@ fun TasksScreen(nav: (String) -> Unit) {
     var creating by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<TaskItem?>(null) }
     var detailTaskId by remember { mutableStateOf<Int?>(null) }
+    var detailSubTaskId by remember { mutableStateOf<Int?>(null) }
 
     // ---- 云同步：下拉列表顶部露出空白、松手弹回（微博式，无加载圈圈），下拉超过阈值静默触发一次完整同步；
     //      同步过程看右上角状态球（呼吸闪烁），结果用 Toast 轻提示 ----
@@ -483,9 +485,20 @@ fun TasksScreen(nav: (String) -> Unit) {
         TaskDetailSheet(
             taskId = tid, date = selectedDate,
             goals = goals, tags = tags, timeTags = timeTags,
-            onClose = { detailTaskId = null },
-            onEdit = { editingTask = it; detailTaskId = null },
-            onDelete = { deleteTarget = it; detailTaskId = null },
+            onClose = { detailTaskId = null; detailSubTaskId = null },
+            onEdit = { editingTask = it; detailTaskId = null; detailSubTaskId = null },
+            onDelete = { deleteTarget = it; detailTaskId = null; detailSubTaskId = null },
+            onOpenSub = { detailSubTaskId = it },
+        )
+    }
+    // 子任务详情：叠在父任务详情之上（子任务也有自己的打卡图）
+    detailSubTaskId?.let { sid ->
+        TaskDetailSheet(
+            taskId = sid, date = selectedDate,
+            goals = goals, tags = tags, timeTags = timeTags,
+            onClose = { detailSubTaskId = null },
+            onEdit = { editingTask = it; detailSubTaskId = null },
+            onDelete = { deleteTarget = it; detailSubTaskId = null },
         )
     }
 }
@@ -768,6 +781,7 @@ private fun TaskDetailSheet(
     onClose: () -> Unit,
     onEdit: (TaskItem) -> Unit,
     onDelete: (TaskItem) -> Unit,
+    onOpenSub: (Int) -> Unit = {},
 ) {
     val rev = DataBus.rev
     val task = rememberData(key = rev) { Repos.tasks().find { it.id == taskId } } ?: return
@@ -854,6 +868,10 @@ private fun TaskDetailSheet(
                 }
             }
 
+            Spacer(Modifier.height(12.dp))
+
+            // 打卡图：近 15 周每天完成情况（亮色=当天完成，点击圆圈补卡需回列表对应日期）
+            CheckinChart(task, completions, accent ?: MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(12.dp))
 
             // 统计（按任务类型展示）：习惯型=打卡率，量化=进度/剩余，一次性=状态/完成时间
@@ -1017,7 +1035,8 @@ private fun TaskDetailSheet(
                 subtasks.forEach { sub ->
                     val subDone = TaskLogic.isDoneOn(sub, date, completions)
                     Row(
-                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                            .clickable { onOpenSub(sub.id) },
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
@@ -1088,3 +1107,91 @@ private fun TaskDetailSheet(
 
 private fun fmtNum(d: Double): String =
     if (abs(d - d.roundToLong()) < 0.001) d.roundToLong().toString() else "%.1f".format(d)
+
+// ============ 打卡图（近 15 周热力格） ============
+
+/** 打卡图的单日完成判定（与列表展示口径一致）：一次性/周期=完成当天；循环=当日打卡记录；量化=当日打卡记录或达标当天 */
+private fun doneOnDay(t: TaskItem, d: LocalDate, completions: List<com.joe.mepe.data.TaskCompletionRecord>): Boolean =
+    when (t.type) {
+        TaskTypes.ONE_TIME, TaskTypes.PERIODIC -> t.completedAt?.toLocalDate() == d
+        TaskTypes.QUANTITATIVE ->
+            completions.any { it.taskId == t.id && it.date == d.toString() } ||
+                t.completedAt?.toLocalDate() == d
+        else -> TaskLogic.isDoneOn(t, d, completions)
+    }
+
+/** 近 15 周每日完成情况：亮色=当天完成，灰=当天该做未做，淡=无安排/未开始，最后一格为今天 */
+@Composable
+private fun CheckinChart(
+    task: TaskItem,
+    completions: List<com.joe.mepe.data.TaskCompletionRecord>,
+    accent: Color,
+) {
+    val today = LocalDate.now()
+    val weeks = 15
+    val thisMonday = today.minusDays((today.dayOfWeek.value - 1).toLong())
+    val start = thisMonday.minusDays(((weeks - 1) * 7).toLong())
+
+    Column {
+        Text(
+            "打卡图 · 近${weeks}周",
+            style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(6.dp))
+        Row {
+            // 星期标签列（一 / 三 / 五）
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                listOf("一", "", "三", "", "五", "", "日").forEach { lb ->
+                    Box(Modifier.size(13.dp), contentAlignment = Alignment.Center) {
+                        if (lb.isNotEmpty()) Text(
+                            lb, fontSize = 8.sp, lineHeight = 8.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.width(3.dp))
+            repeat(weeks) { w ->
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    repeat(7) { dow ->
+                        val d = start.plusDays((w * 7 + dow).toLong())
+                        val state = when {
+                            d > today -> 0
+                            doneOnDay(task, d, completions) -> 2
+                            TaskLogic.occursOnDate(task, d) -> 1
+                            else -> 0
+                        }
+                        val bg = when (state) {
+                            2 -> accent
+                            1 -> MaterialTheme.colorScheme.surfaceVariant
+                            else -> MaterialTheme.colorScheme.surfaceVariant.copy(
+                                alpha = if (d > today) 0.15f else 0.35f
+                            )
+                        }
+                        var cell = Modifier.size(13.dp).background(bg, RoundedCornerShape(3.dp))
+                        if (d == today) cell = cell.border(1.dp, accent.copy(alpha = 0.8f), RoundedCornerShape(3.dp))
+                        Box(cell)
+                    }
+                }
+                Spacer(Modifier.width(2.dp))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ChartLegend(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), "无安排")
+            Spacer(Modifier.width(10.dp))
+            ChartLegend(MaterialTheme.colorScheme.surfaceVariant, "未完成")
+            Spacer(Modifier.width(10.dp))
+            ChartLegend(accent, "已完成")
+        }
+    }
+}
+
+@Composable
+private fun ChartLegend(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(8.dp).background(color, RoundedCornerShape(2.dp)))
+        Spacer(Modifier.width(4.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
