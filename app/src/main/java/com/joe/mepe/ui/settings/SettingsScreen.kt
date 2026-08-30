@@ -348,8 +348,9 @@ private fun SyncPage(onBack: () -> Unit) {
                                 var result: String? = null
                                 var failures = 0
                                 while (isActive) {
+                                    // 比要求的最小间隔多留 2 秒余量（网络往返有抖动，掐得太准会被 GitHub 判定轮询过快触发 slow_down 限流）；
                                     // 网络异常后额外多等 3 秒再重试，给网络恢复留时间
-                                    kotlinx.coroutines.delay(s.interval * 1000L + (if (failures > 0) 3000L else 0L))
+                                    kotlinx.coroutines.delay(s.interval * 1000L + 2000L + (if (failures > 0) 3000L else 0L))
                                     result = try {
                                         val r = GitHubLogin.poll(s)
                                         if (failures > 0) loginMsg = "网络已恢复，继续等待授权…"
@@ -369,11 +370,11 @@ private fun SyncPage(onBack: () -> Unit) {
                                 if (r.startsWith("!")) {
                                     loginMsg = r
                                 } else {
+                                    // 先立即落盘 token——拉取用户名（api.github.com）可能很慢甚至超时，不能拖住登录完成
                                     val fresh = SyncConfig.load(ctx)
                                     fresh.pat = r
                                     fresh.refreshToken = s.refreshToken
                                     fresh.tokenExpiresAt = s.tokenExpiresAt
-                                    fresh.account = GitHubLogin.fetchAccountName(r)
                                     SyncConfig.save(ctx, fresh)
                                     syncPat = r
                                     loginMsg = "✓ 授权成功，正在自动创建同步仓库 ME-Data…"
@@ -382,6 +383,14 @@ private fun SyncPage(onBack: () -> Unit) {
                                         "✓ 授权成功，已配置仓库 $repo，可直接上传/下载"
                                     } catch (e: Exception) {
                                         "✓ 授权成功，但自动建仓失败：${e.message}（可手动填仓库名）"
+                                    }
+                                    // 账号名仅用于显示，后台补拉，失败不影响登录
+                                    val acc = GitHubLogin.fetchAccountName(r)
+                                    if (acc.isNotBlank()) {
+                                        val f2 = SyncConfig.load(ctx)
+                                        f2.account = acc
+                                        SyncConfig.save(ctx, f2)
+                                        DataBus.bump()   // 刷新页面上的「已登录」显示
                                     }
                                 }
                             } catch (e: java.net.UnknownHostException) {
