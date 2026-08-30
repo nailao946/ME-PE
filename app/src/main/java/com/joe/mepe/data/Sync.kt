@@ -489,6 +489,7 @@ private class WebDavBackend(private val conf: SyncConfig.Conf) : CloudBackend {
 
     private fun describeError(code: Int, text: String): String = when {
         code == 401 || code == 403 -> "WebDAV 账号或密码不正确（坚果云请用网页版「安全选项 → 添加应用密码」生成的密码，不能用登录密码）"
+        code == 409 -> "HTTP 409：目标文件夹在云端无法就位（自动创建未生效或请求过于频繁——坚果云免费版每 30 分钟限约 600 个请求），请稍后重试，或在坚果云客户端手动建好目标文件夹"
         else -> "HTTP $code：${text.take(300)}"
     }
 
@@ -506,12 +507,32 @@ private class WebDavBackend(private val conf: SyncConfig.Conf) : CloudBackend {
 
     override fun ensureReady(context: Context): String {
         if (conf.repo.isBlank()) conf.repo = "ME-Data"
-        // MKCOL 建目录：201 = 已创建，405/301 = 已存在，均可继续
-        val (code, text) = call("MKCOL", folder, null)
-        if (code != 201 && code != 405 && code != 301 && code != 200 && code != 409)
-            throw RuntimeException("创建 WebDAV 目录失败：" + describeError(code, text))
+        ensureDirs()
         SyncConfig.save(context, conf)
         return folder
+    }
+
+    /**
+     * 逐级创建同步目录。坚果云等 WebDAV 服务不会隐式建父目录：父级缺失时 MKCOL/PUT
+     * 一律 409（实测坚果云返回 <s:exception>AncestorsNotFound</s:exception>）。
+     * 旧版把 MKCOL 的 409 当「可继续」，目录没建成照样上传 → 每个文件都 409 失败。
+     */
+    private fun ensureDirs() {
+        val root = Regex("^(https?://[^/]+)", RegexOption.IGNORE_CASE).find(base)?.groupValues?.get(1)
+            ?: throw RuntimeException("WebDAV 服务器地址无效，请检查（坚果云为 https://dav.jianguoyun.com/dav/）")
+        var path = base.removePrefix(root).trimEnd('/')
+        // folder = base + 各级目录（enc 过），从 base 之后逐级 MKCOL
+        for (seg in folder.removePrefix(base).split('/').filter { it.isNotBlank() }) {
+            path += "/" + seg
+            var r = call("MKCOL", root + path, null)
+            if (r.first == 409) { // 坚果云最终一致：刚建好的上级目录偶发立刻查不到，稍等重试一次
+                Thread.sleep(800)
+                r = call("MKCOL", root + path, null)
+            }
+            // 201 = 已创建；405/301/200 = 目录已存在，均可继续
+            if (r.first != 201 && r.first != 405 && r.first != 301 && r.first != 200)
+                throw RuntimeException("创建 WebDAV 目录失败：" + describeError(r.first, r.second))
+        }
     }
 
     override fun list(): List<RemoteFile> {
@@ -560,7 +581,15 @@ private class WebDavBackend(private val conf: SyncConfig.Conf) : CloudBackend {
     }
 
     override fun write(name: String, content: String, prevRev: String?): String {
-        val (code, text) = call("PUT", folder + enc(name), content.toByteArray(Charsets.UTF_8), "application/json;charset=utf-8")
+        val body = content.toByteArray(Charsets.UTF_8)
+        val url = folder + enc(name)
+        var (code, text) = call("PUT", url, body, "application/json;charset=utf-8")
+        if (code == 409) {
+            // 目标目录在云端缺失（坚果云 AncestorsNotFound）或最终一致延迟：重建目录后重试一次
+            ensureDirs()
+            val r = call("PUT", url, body, "application/json;charset=utf-8")
+            code = r.first; text = r.second
+        }
         if (code !in 200..299 && code != 204) throw RuntimeException(describeError(code, text))
         return md5(content)
     }

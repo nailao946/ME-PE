@@ -303,7 +303,8 @@ private fun SyncPage(onBack: () -> Unit) {
     var syncProvider by remember(syncConf.provider) { mutableStateOf(syncConf.provider.ifBlank { "github" }) }
     var syncPat by remember(syncConf.pat) { mutableStateOf(syncConf.pat) }
     var syncGiteePat by remember(syncConf.giteePat) { mutableStateOf(syncConf.giteePat) }
-    var syncWebDavUrl by remember(syncConf.webdavUrl) { mutableStateOf(syncConf.webdavUrl) }
+    // 服务器地址默认填坚果云（留空时运行时也按坚果云处理，这里直接展示出来免得用户手填）
+    var syncWebDavUrl by remember(syncConf.webdavUrl) { mutableStateOf(syncConf.webdavUrl.ifBlank { "https://dav.jianguoyun.com/dav/" }) }
     var syncWebDavUser by remember(syncConf.webdavUser) { mutableStateOf(syncConf.webdavUser) }
     var syncWebDavPass by remember(syncConf.webdavPass) { mutableStateOf(syncConf.webdavPass) }
     var syncRepo by remember(syncConf.repo) { mutableStateOf(syncConf.repo.ifBlank { "ME-Data" }) }
