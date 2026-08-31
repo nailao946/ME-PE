@@ -308,7 +308,12 @@ private fun SyncPage(onBack: () -> Unit) {
     var syncWebDavUser by remember(syncConf.webdavUser) { mutableStateOf(syncConf.webdavUser) }
     var syncWebDavPass by remember(syncConf.webdavPass) { mutableStateOf(syncConf.webdavPass) }
     var syncRepo by remember(syncConf.repo) { mutableStateOf(syncConf.repo.ifBlank { "ME-Data" }) }
-    var syncBranch by remember(syncConf.branch) { mutableStateOf(syncConf.branch.ifBlank { "main" }) }
+    var syncBranch by remember(syncConf.provider) {
+        mutableStateOf(
+            syncConf.branches[syncConf.provider]?.takeUnless { it.isBlank() }
+                ?: syncConf.branch.ifBlank { if (syncConf.provider == "gitee") "master" else "main" }
+        )
+    }
     var syncAuto by remember(syncConf.autoPush) { mutableStateOf(syncConf.autoPush) }
     var syncing by remember { mutableStateOf(false) }
     var loginMsg by remember { mutableStateOf("") }
@@ -328,6 +333,7 @@ private fun SyncPage(onBack: () -> Unit) {
             it.webdavPass = syncWebDavPass.trim()
             it.repo = syncRepo.trim()
             it.branch = syncBranch.trim().ifBlank { if (syncProvider == "gitee") "master" else "main" }
+            it.branches = it.branches + (syncProvider to it.branch) // 分支按云端分别记忆（多云互不干扰）
             it.autoPush = syncAuto
         }
         SyncConfig.save(ctx, c)
@@ -340,8 +346,17 @@ private fun SyncPage(onBack: () -> Unit) {
             SectionCard(title = "同步方式") {
                 Segmented(listOf("GitHub", "Gitee", "WebDAV"), when (syncProvider) { "gitee" -> 1; "webdav" -> 2; else -> 0 }) { idx ->
                     syncProvider = when (idx) { 1 -> "gitee"; 2 -> "webdav"; else -> "github" }
+                    // 切换方式时带出该云端各自记忆的分支
+                    val fresh = SyncConfig.load(ctx)
+                    syncBranch = fresh.branches[syncProvider]?.takeUnless { it.isBlank() }
+                        ?: (if (syncProvider == "gitee") "master" else "main")
                 }
                 Spacer(Modifier.height(6.dp))
+                Text(
+                    "多云同步：任一方式填好凭据即启用该云端；「上传」会同时推送到所有已启用的云端互为备份，某个失败不影响其他；「下载」优先取最近上传成功的云端。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(4.dp))
                 Text(
                     when (syncProvider) {
                         "gitee" -> "Gitee（国内直连快）：到 gitee.com → 设置 → 安全设置 → 私人令牌 生成令牌（勾选 projects 与 user_info），粘贴到下方即可。"
@@ -489,7 +504,7 @@ private fun SyncPage(onBack: () -> Unit) {
                     LabeledField("分支", syncBranch, { syncBranch = it }, placeholder = if (syncProvider == "gitee") "master" else "main")
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "GitHub 默认 main，Gitee 默认 master；切换同步方式后如上传报分支错误，改成对应默认分支即可",
+                        "GitHub 默认 main，Gitee 默认 master；分支按云端分别记忆，切换同步方式会自动带出对应分支",
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -499,6 +514,17 @@ private fun SyncPage(onBack: () -> Unit) {
                 }
                 Spacer(Modifier.height(8.dp))
                 ToggleRow("自动上传", syncAuto, { syncAuto = it }, sub = "每次修改数据后自动推送到仓库")
+                // 当前已启用的云端（凭据齐全即启用，上传时同时推送）
+                val enabledClouds = buildList {
+                    if (syncPat.isNotBlank() || syncConf.pat.isNotBlank()) add("GitHub")
+                    if (syncGiteePat.isNotBlank() || syncConf.giteePat.isNotBlank()) add("Gitee")
+                    if (syncWebDavUser.isNotBlank() && (syncWebDavPass.isNotBlank() || syncConf.webdavPass.isNotBlank())) add("WebDAV")
+                }
+                if (enabledClouds.isNotEmpty())
+                    Text(
+                        "已启用云端：${enabledClouds.joinToString("、")}（上传时同时推送）",
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary
+                    )
                 if (syncConf.lastPushAt.isNotBlank())
                     Text("上次上传：${syncConf.lastPushAt.take(19).replace('T', ' ')}",
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -510,7 +536,7 @@ private fun SyncPage(onBack: () -> Unit) {
             // 上传 / 下载
             SectionCard(title = "上传 / 下载") {
                 Text(
-                    "上传会覆盖云端；若云端有比本地更新的文件会自动跳过并提示（先下载即可拿到最新）。下载会先备份本机数据。",
+                    "上传会推送到所有已启用的云端（互为备份）；若某云端有比本地更新的文件会自动跳过并提示（先下载即可拿到最新）。下载优先取最近上传成功的云端，会先备份本机数据。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(8.dp))

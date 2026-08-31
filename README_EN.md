@@ -96,6 +96,17 @@ app/src/main/java/com/joe/mepe/
 
 ## Recent Updates
 
+### v2.4.41
+
+- **Fixed misaligned taps on the Health page**: mid-animation page positions were synced back to the tab bar, which interrupted the pending scroll — tapping "Weight" landed on "Sleep", "Water" landed on "Body", "Mood" landed on "Water" (top tabs affected too). Page position is now synced only after the pager settles
+- **Pinned health overview**: the overview is no longer a tab — it now stays pinned above the tab bar (collapsible by tapping its title), so today's summary is visible on every sub-page and metric/quick-record tiles jump straight to the right tab; everything else scrolls as usual
+- **Sort & collapse for record lists**: all record lists (water today, uric acid history, time-tracking daily records, etc.) gained a sort icon (oldest-first / newest-first, icon only) and a collapse chevron in the title row, with expand/collapse animations
+- **"Today" page in Review**: period selector is now Today / Week / Month; the Today page shows today's completion rate, done tasks, remaining tasks and a 7-day rate chart, with time stats focused on today; writing reviews & history stay on Week/Month
+- **Review time stats as line charts that follow the period**: the 14-day daily and 12-month monthly duration charts are now line charts; tapping the Today / This week / This month / All labels switches the chart to that range
+- **Equal stat-card heights**: cards without a "vs previous period" line now reserve the same row, so all cards in a row share the same height
+- **Calendar day detail follows task order**: the day's task list now sorts like the Tasks page (priority descending, then manual order), plus a daily progress row (done / total for that day, same counting as Review)
+- **Multi-cloud sync (redundant backups)**: any of GitHub / Gitee / WebDAV with credentials filled is enabled; uploads are pushed to ALL enabled clouds at once — one failing doesn't affect the others and is caught up on the next upload; downloads prefer the cloud with the most recent successful upload and fall back to the next one on failure; branches are remembered per cloud (GitHub=main, Gitee=master), old configs migrate automatically
+
 ### v2.4.40
 
 - **Fixed WebDAV (Jianguoyun) uploads failing with HTTP 409**: Jianguoyun and other WebDAV services never create parent folders implicitly — uploading into a missing folder always returns 409 (AncestorsNotFound). The old code mistook the folder-creation request's 409 for "folder already exists, go ahead", so nothing was created and every file failed. The app now creates the sync folder level by level before uploading, and a 409 during upload triggers an automatic folder re-creation plus one retry; the server address defaults to Jianguoyun (https://dav.jianguoyun.com/dav/) and is pre-filled when switching to WebDAV (desktop version fixed in sync)

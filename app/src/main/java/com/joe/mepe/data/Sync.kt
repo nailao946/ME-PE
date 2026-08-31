@@ -51,8 +51,12 @@ object SyncConfig {
         var webdavUser: String = "",      // WebDAV 账号（坚果云为注册手机号/邮箱）
         var webdavPass: String = "",      // WebDAV 密码（坚果云用「安全选项」里生成的应用密码）
         // 每个文件上次同步后的云端版本标识（Git=文件 sha，WebDAV=内容 md5），
-        // 用于检测「云端比本地新」避免覆盖别人/别的设备的更新
+        // 用于检测「云端比本地新」避免覆盖别人/别的设备的更新（旧版单云端字段，保留兼容）
         var fileShas: Map<String, String> = emptyMap(),
+        // 多云同步：每个云端各自的文件版本标识 / 上次上传成功时间 / 分支（GitHub=main、Gitee=master 互不干扰）
+        var providerShas: Map<String, Map<String, String>> = emptyMap(),
+        var providerLastPush: Map<String, String> = emptyMap(),
+        var branches: Map<String, String> = emptyMap(),
     )
 
     private const val FILE = "sync_config.json"
@@ -68,6 +72,12 @@ object SyncConfig {
             c.repo = if (c.repo.contains('/')) c.repo.substringBefore('/') + "/ME-Data" else "ME-Data"
             save(context, c)
         }
+        // 旧版单云端配置迁移到多云结构：旧版本标识/上传时间/分支都归到当时所选的云端名下
+        var migrated = false
+        if (c.providerShas.isEmpty() && c.fileShas.isNotEmpty()) { c.providerShas = mapOf(c.provider to c.fileShas); migrated = true }
+        if (c.providerLastPush.isEmpty() && c.lastPushAt.isNotBlank()) { c.providerLastPush = mapOf(c.provider to c.lastPushAt); migrated = true }
+        if (c.branches.isEmpty() && c.branch.isNotBlank()) { c.branches = mapOf(c.provider to c.branch); migrated = true }
+        if (migrated) save(context, c)
         c
     } catch (_: Exception) { Conf() }
 
@@ -146,7 +156,7 @@ object CloudSync {
     /** 反馈提交目标仓库（项目 Issues，非用户的同步数据仓库）。反馈始终走 GitHub，与云同步方式无关 */
     private const val FEEDBACK_REPO = "nailao946/ME-PE"
 
-    private fun backendFor(conf: SyncConfig.Conf): CloudBackend = when (conf.provider) {
+    private fun backendFor(conf: SyncConfig.Conf, provider: String = conf.provider): CloudBackend = when (provider) {
         "gitee" -> GitBackend(conf, GITEE_API, "Gitee", true)
         "webdav" -> WebDavBackend(conf)
         else -> GitBackend(conf, GITHUB_API, "GitHub", false)
@@ -191,54 +201,103 @@ object CloudSync {
         backendFor(conf).ensureReady(context)
     }
 
-    /** 上传 JsonData 全部文件到云端（逐文件提交）。
-     *  防覆盖：若某文件云端版本与上次同步记录不一致（别的设备改过），跳过该文件并提示先下载。 */
+    /** 已配置凭据、可参与同步的云端（多云同步：填好哪个的凭据就启用哪个，全部同时上传互为备份） */
+    fun configuredProviders(conf: SyncConfig.Conf): List<String> = listOfNotNull(
+        "github".takeIf { conf.pat.isNotBlank() },
+        "gitee".takeIf { conf.giteePat.isNotBlank() },
+        "webdav".takeIf { conf.webdavUser.isNotBlank() && conf.webdavPass.isNotBlank() },
+    )
+
+    private fun providerLabel(p: String) = when (p) { "gitee" -> "Gitee"; "webdav" -> "WebDAV"; else -> "GitHub" }
+
+    /**
+     * 上传 JsonData 全部文件到云端。多云同步：所有已配置的云端逐个上传，任一成功即有备份，
+     * 某个失败不影响其他（下次上传会自动把失败的补齐）。
+     * 防覆盖（按云端分别记录版本）：某文件在某个云端被别的设备改过时，该云端跳过此文件并提示先下载。
+     */
     suspend fun push(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
-        val backend = backendFor(conf)
-        if (conf.provider != "webdav" && conf.provider != "gitee") GitHubLogin.maybeRefresh(context, conf)
         val files = JsonStore.allFiles()
         if (files.isEmpty()) return@withContext "没有可上传的数据"
-        backend.ensureReady(context)
+        val targets = configuredProviders(conf)
+        if (targets.isEmpty()) return@withContext "✗ 请先在「设置 → 云同步」配置好同步账号（GitHub / Gitee / WebDAV）后再上传"
+        val parts = mutableListOf<String>()
         var okCount = 0
-        var skipped = 0
-        var lastErr: String? = null
-        val newShas = conf.fileShas.toMutableMap()
-        for (f in files) {
+        for (p in targets) {
             try {
-                val rev = backend.revOf(f.name)
-                // 云端被其它设备更新过而本地没有先下载 → 跳过，避免覆盖
-                val known = conf.fileShas[f.name]
-                if (known != null && rev != null && known != rev) {
-                    skipped++
-                    continue
-                }
-                val content = f.readText()
-                newShas[f.name] = backend.write(f.name, content, rev)
-                okCount++
+                val r = pushProvider(context, conf, p, files)
+                parts += "${providerLabel(p)} $r"
+                if (r.startsWith("✓")) okCount++
             } catch (e: Exception) {
-                lastErr = e.message
+                parts += "${providerLabel(p)} ✗ ${e.message ?: "网络异常"}"
             }
         }
         if (okCount > 0) {
-            conf.fileShas = newShas
             conf.lastPushAt = java.time.LocalDateTime.now().toString()
             SyncConfig.save(context, conf)
         }
-        val base = if (okCount == files.size) "✓ 已上传 $okCount 个文件"
-        else "已上传 $okCount/${files.size} 个" + (lastErr?.let { "，错误：$it" } ?: "")
-        return@withContext if (skipped > 0)
-            "$base；云端有 $skipped 个文件比本地新，已跳过（请先「下载数据」再上传）"
-        else base
+        when {
+            okCount == targets.size -> "✓ 已上传到全部 ${targets.size} 个云端（${parts.joinToString("；")}）"
+            okCount > 0 -> "✓ 已上传 ${okCount}/${targets.size} 个云端（${parts.joinToString("；")}）"
+            else -> "✗ 上传失败（${parts.joinToString("；")}）"
+        }
+    }
+
+    /** 上传到单个云端；返回以 ✓/✗ 开头的结果短语 */
+    private suspend fun pushProvider(context: Context, conf: SyncConfig.Conf, provider: String, files: List<File>): String {
+        if (provider == "github") GitHubLogin.maybeRefresh(context, conf)
+        val backend = backendFor(conf, provider)
+        backend.ensureReady(context)
+        val known = conf.providerShas[provider].orEmpty().toMutableMap()
+        var okCount = 0
+        var skipped = 0
+        var lastErr: String? = null
+        for (f in files) {
+            try {
+                val rev = backend.revOf(f.name)
+                // 云端被其它设备更新过而本地没有先下载 → 此云端跳过，避免覆盖
+                val k = known[f.name]
+                if (k != null && rev != null && k != rev) { skipped++; continue }
+                known[f.name] = backend.write(f.name, f.readText(), rev)
+                okCount++
+            } catch (e: Exception) { lastErr = e.message }
+        }
+        if (okCount > 0) {
+            conf.providerShas = conf.providerShas + (provider to known.toMap())
+            conf.providerLastPush = conf.providerLastPush + (provider to java.time.LocalDateTime.now().toString())
+            SyncConfig.save(context, conf)
+        }
+        return when {
+            okCount == 0 && skipped > 0 -> "✗ 云端有 $skipped 个文件比本地新，已全部跳过（请先「下载数据」再上传）"
+            okCount == 0 -> "✗ ${lastErr ?: "上传失败"}"
+            else -> "✓ 已上传 $okCount/${files.size} 个" +
+                (if (skipped > 0) "；$skipped 个云端较新已跳过（请先下载）" else "") +
+                (lastErr?.let { "；错误：$it" } ?: "")
+        }
     }
 
     /** 从云端下载并覆盖本地 JsonData（先做本地备份）。
+     *  多云同步时下载源取「最近一次上传成功」的云端（数据最可能是最新基准），失败自动换下一个云端兜底。
      *  写盘前校验是有效 JSON，损坏内容不会写进本地数据；单个文件失败不影响其它文件，
      *  失败的文件名与原因会列在结果里。 */
     suspend fun pull(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
-        val backend = backendFor(conf)
-        if (conf.provider != "webdav" && conf.provider != "gitee") GitHubLogin.maybeRefresh(context, conf)
+        val targets = configuredProviders(conf)
+        if (targets.isEmpty()) return@withContext "✗ 请先在「设置 → 云同步」配置好同步账号（GitHub / Gitee / WebDAV）后再下载"
+        val ordered = (listOf(conf.provider) + targets.filter { it != conf.provider })
+            .distinct()
+            .sortedByDescending { conf.providerLastPush[it] ?: "" }
+        var lastErr: String? = null
+        for (p in ordered) {
+            try { return@withContext pullProvider(context, conf, p) }
+            catch (e: Exception) { lastErr = "${providerLabel(p)}：${e.message ?: "网络异常"}" }
+        }
+        "✗ 下载失败（$lastErr）"
+    }
+
+    private suspend fun pullProvider(context: Context, conf: SyncConfig.Conf, provider: String): String {
+        if (provider == "github") GitHubLogin.maybeRefresh(context, conf)
+        val backend = backendFor(conf, provider)
         backend.ensureReady(context)
 
         // 目录清单：一次拿到每个文件的名字、大小与版本标识
@@ -247,7 +306,7 @@ object CloudSync {
         } catch (e: Exception) {
             if (e.message?.contains("404") == true) emptyList() else throw e
         }
-        if (items.isEmpty()) return@withContext "同步目录为空，没有可下载的数据"
+        if (items.isEmpty()) return "同步目录为空，没有可下载的数据"
 
         // 本地备份
         val backupDir = File(context.filesDir, "JsonData_backup_${System.currentTimeMillis()}")
@@ -257,7 +316,7 @@ object CloudSync {
         var n = 0
         var lastErr: String? = null
         val failed = mutableListOf<String>()
-        val newShas = conf.fileShas.toMutableMap()
+        val newShas = conf.providerShas[provider].orEmpty().toMutableMap()
         for (item in items) {
             try {
                 val r = backend.read(item.name)
@@ -278,14 +337,14 @@ object CloudSync {
             }
         }
         if (n > 0) {
-            conf.fileShas = newShas
+            conf.providerShas = conf.providerShas + (provider to newShas.toMap())
             conf.lastPullAt = java.time.LocalDateTime.now().toString()
             SyncConfig.save(context, conf)
             DataBus.bump()
         }
-        if (failed.isEmpty()) return@withContext "✓ 已下载 $n 个文件（原数据已备份）"
+        if (failed.isEmpty()) return "✓ 已从${providerLabel(provider)}下载 $n 个文件（原数据已备份）"
         val names = failed.take(4).joinToString("、") + if (failed.size > 4) "等${failed.size}个文件" else ""
-        "已下载 $n/${items.size} 个，失败：$names" + (lastErr?.let { "（$it）" } ?: "")
+        return "已从${providerLabel(provider)}下载 $n/${items.size} 个，失败：$names" + (lastErr?.let { "（$it）" } ?: "")
     }
 }
 
@@ -306,7 +365,10 @@ private class GitBackend(
     }
 
     private val token = if (isGitee) conf.giteePat.trim() else conf.pat.trim()
-    private val branch get() = conf.branch.ifBlank { if (isGitee) "master" else "main" }
+    private val providerKey = if (isGitee) "gitee" else "github"
+    // 分支按云端独立记忆（多云同步时 GitHub=main 与 Gitee=master 互不干扰）
+    private val branch get() = conf.branches[providerKey]?.takeUnless { it.isBlank() }
+        ?: (if (isGitee) "master" else "main")
 
     /** 统一错误文案：401 = 令牌在云端侧已失效（被撤销或过期），引导重新配置 */
     private fun describeError(code: Int, text: String): String = when {
@@ -400,12 +462,9 @@ private class GitBackend(
             if (!exists) throw e
         }
 
-        if (isGitee) {
-            // Gitee 新仓库默认分支是 master
-            if (conf.branch.isBlank() || conf.branch.equals("main", ignoreCase = true)) conf.branch = "master"
-        } else if (conf.branch.isBlank()) {
-            conf.branch = "main"
-        }
+        // 分支按云端独立记忆：首次用到该云端时记下默认分支（Gitee 新仓库默认 master）
+        if (conf.branches[providerKey].isNullOrBlank()) conf.branches = conf.branches + (providerKey to branch)
+        conf.branch = branch // 兼容旧字段展示
         SyncConfig.save(context, conf)
         return "$login/$name"
     }

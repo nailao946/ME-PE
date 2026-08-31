@@ -35,6 +35,7 @@ import com.joe.mepe.data.TaskLogic
 import com.joe.mepe.ui.BarChart
 import com.joe.mepe.ui.EmptyHint
 import com.joe.mepe.ui.LabeledField
+import com.joe.mepe.ui.LineChart
 import com.joe.mepe.ui.ScreenHeader
 import com.joe.mepe.ui.SectionCard
 import com.joe.mepe.ui.StatChip
@@ -42,10 +43,10 @@ import com.joe.mepe.ui.rememberData
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
-/** 定期盘点：周/月统计 + 完成率趋势 + 历史盘点记录 */
+/** 定期盘点：今日/周/月统计 + 完成率趋势 + 历史盘点记录 */
 @Composable
 fun ReviewScreen(nav: (String) -> Unit) {
-    var mode by rememberSaveable { mutableStateOf(0) } // 0=周 1=月
+    var mode by rememberSaveable { mutableStateOf(0) } // 0=今日 1=周 2=月
     var writing by remember { mutableStateOf(false) }
 
     val rev = DataBus.rev
@@ -55,9 +56,11 @@ fun ReviewScreen(nav: (String) -> Unit) {
     val reviews = remember(rev) { Repos.reviews() }
     val today = LocalDate.now()
 
-    val (start, end) = if (mode == 0)
-        today.with(java.time.DayOfWeek.MONDAY) to today
-    else today.withDayOfMonth(1) to today
+    val (start, end) = when (mode) {
+        0 -> today to today
+        1 -> today.with(java.time.DayOfWeek.MONDAY) to today
+        else -> today.withDayOfMonth(1) to today
+    }
 
     val days = generateSequence(start) { it.plusDays(1) }.takeWhile { !it.isAfter(end) }.toList()
     // 统计口径（与桌面端一致）：总任务数=当日应做的任务（子任务、未设每日目标的量化、非当日循环任务不计）；
@@ -69,32 +72,36 @@ fun ReviewScreen(nav: (String) -> Unit) {
     val validRates = days.indices.mapNotNull { i -> if (duePerDay[i] > 0) donePerDay[i].toDouble() / duePerDay[i] else null }
     val avgRate = if (validRates.isEmpty()) null else validRates.average()
 
-    // 较上期：周盘点比上周，月盘点比上个月
-    val prevStart = if (mode == 0) start.minusDays(7) else start.minusMonths(1)
-    val prevEnd = start.minusDays(1)
+    // 较上期：今日比昨天，周盘点比上周，月盘点比上个月
+    val prevStart = when (mode) { 0 -> today.minusDays(1); 1 -> start.minusDays(7); else -> start.minusMonths(1) }
+    val prevEnd = if (mode == 0) prevStart else start.minusDays(1)
     val prevDays = generateSequence(prevStart) { it.plusDays(1) }.takeWhile { !it.isAfter(prevEnd) }.toList()
     val prevTotal = prevDays.sumOf { d -> tasks.count { TaskLogic.dueOnDate(it, d) } }
     val prevDone = prevDays.sumOf { d -> tasks.count { TaskLogic.doneOnDate(it, d, completions) } }
     val prevRate = if (prevTotal > 0) prevDone.toDouble() / prevTotal else null
+    val cmpLabel = if (mode == 0) "较昨日" else "较上期"
     val rateTrend = if (avgRate != null && prevRate != null) {
         val diff = Math.round((avgRate - prevRate) * 100)
-        "较上期${if (diff >= 0) "+" else ""}$diff%" to (diff >= 0)
+        "$cmpLabel${if (diff >= 0) "+" else ""}$diff%" to (diff >= 0)
     } else null
     val doneTrend = if (prevTotal > 0 || totalDue > 0) {
         val diff = doneTotal - prevDone
-        "较上期${if (diff >= 0) "+" else ""}$diff" to (diff >= 0)
+        "$cmpLabel${if (diff >= 0) "+" else ""}$diff" to (diff >= 0)
     } else null
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         ScreenHeader(
             title = "盘点",
             icon = Icons.Filled.RateReviewIcon,
-            subtitle = if (mode == 0) "本周 ${start.monthValue}/${start.dayOfMonth} - ${end.monthValue}/${end.dayOfMonth}"
-                       else "${today.year}年${today.monthValue}月",
+            subtitle = when (mode) {
+                0 -> "今日 ${start.monthValue}/${start.dayOfMonth}"
+                1 -> "本周 ${start.monthValue}/${start.dayOfMonth} - ${end.monthValue}/${end.dayOfMonth}"
+                else -> "${today.year}年${today.monthValue}月"
+            },
             onBack = { nav(com.joe.mepe.ui.Routes.BACK) },
             actions = { com.joe.mepe.ui.QuickLinks(com.joe.mepe.ui.Routes.REVIEW, nav) }
         )
-        com.joe.mepe.ui.Segmented(listOf("周盘点", "月盘点"), mode, Modifier.padding(horizontal = 16.dp)) { mode = it }
+        com.joe.mepe.ui.Segmented(listOf("今日", "周盘点", "月盘点"), mode, Modifier.padding(horizontal = 16.dp)) { mode = it }
         Spacer(Modifier.height(8.dp))
 
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -102,12 +109,23 @@ fun ReviewScreen(nav: (String) -> Unit) {
                 trend = rateTrend?.first, trendUp = rateTrend?.second ?: true)
             StatChip("完成任务", "$doneTotal / $totalDue 个", Modifier.weight(1f),
                 trend = doneTrend?.first, trendUp = doneTrend?.second ?: true)
-            StatChip("活跃天数", "${validRates.size} 天", Modifier.weight(1f))
+            if (mode == 0) StatChip("待完成任务", "${(totalDue - doneTotal).coerceAtLeast(0)} 个", Modifier.weight(1f))
+            else StatChip("活跃天数", "${validRates.size} 天", Modifier.weight(1f))
         }
         Spacer(Modifier.height(8.dp))
 
-        SectionCard(title = "每日完成率趋势") {
-            if (validRates.isEmpty()) EmptyHint("此范围没有任务")
+        SectionCard(title = if (mode == 0) "近7天每日完成率" else "每日完成率趋势") {
+            if (mode == 0) {
+                // 今日页：当天没有趋势可画，附看近 7 天完成率
+                val days7 = (6 downTo 0).map { today.minusDays(it.toLong()) }
+                val due7 = days7.map { d -> tasks.count { TaskLogic.dueOnDate(it, d) } }
+                val done7 = days7.map { d -> tasks.count { TaskLogic.doneOnDate(it, d, completions) } }
+                if (due7.all { it == 0 }) EmptyHint("近7天没有任务")
+                else BarChart(
+                    days7.indices.map { i -> if (due7[i] == 0) 0.0 else done7[i] * 100.0 / due7[i] },
+                    days7.map { "${it.monthValue}/${it.dayOfMonth}" }
+                )
+            } else if (validRates.isEmpty()) EmptyHint("此范围没有任务")
             else BarChart(
                 days.indices.map { i -> if (duePerDay[i] == 0) 0.0 else donePerDay[i] * 100.0 / duePerDay[i] },
                 days.map { "${it.dayOfMonth}" }
@@ -128,32 +146,36 @@ fun ReviewScreen(nav: (String) -> Unit) {
 
         TimeStatsCard(mode = mode, start = start, end = end)
 
-        SectionCard(title = "历史盘点") {
-            val list = reviews.filter { it.type == mode }.sortedByDescending { it.reviewDate }
-            if (list.isEmpty()) EmptyHint("还没有写过盘点")
-            else list.take(10).forEach { r ->
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "${r.reviewDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))} · 完成率 ${(r.completionRate * 100).toInt()}%",
-                            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium
-                        )
-                        r.personalNotes?.takeIf { it.isNotBlank() }?.let {
-                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        // 写盘点与历史盘点只属于周/月，今日页不放
+        if (mode > 0) {
+            val reviewType = mode - 1 // 页面 mode：1=周 2=月 → 盘点记录 type：0=周 1=月
+            SectionCard(title = "历史盘点") {
+                val list = reviews.filter { it.type == reviewType }.sortedByDescending { it.reviewDate }
+                if (list.isEmpty()) EmptyHint("还没有写过盘点")
+                else list.take(10).forEach { r ->
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "${r.reviewDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))} · 完成率 ${(r.completionRate * 100).toInt()}%",
+                                style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium
+                            )
+                            r.personalNotes?.takeIf { it.isNotBlank() }?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        androidx.compose.material3.TextButton(onClick = { Repos.saveReviews(Repos.reviews().filterNot { it.id == r.id }) }) {
+                            Text("删除", color = MaterialTheme.colorScheme.error)
                         }
                     }
-                    androidx.compose.material3.TextButton(onClick = { Repos.saveReviews(Repos.reviews().filterNot { it.id == r.id }) }) {
-                        Text("删除", color = MaterialTheme.colorScheme.error)
-                    }
+                    Spacer(Modifier.height(6.dp))
                 }
-                Spacer(Modifier.height(6.dp))
             }
-        }
 
-        OutlinedButton(
-            onClick = { writing = true },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-        ) { Text(if (mode == 0) "写本周盘点" else "写本月盘点") }
+            OutlinedButton(
+                onClick = { writing = true },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+            ) { Text(if (mode == 1) "写本周盘点" else "写本月盘点") }
+        }
 
         Spacer(Modifier.height(24.dp))
     }
@@ -165,7 +187,7 @@ fun ReviewScreen(nav: (String) -> Unit) {
         androidx.compose.ui.window.Dialog(onDismissRequest = { writing = false }) {
             androidx.compose.material3.Card {
                 Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
-                    Text(if (mode == 0) "本周盘点" else "本月盘点", style = MaterialTheme.typography.titleLarge)
+                    Text(if (mode == 1) "本周盘点" else "本月盘点", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(8.dp))
                     if (avgRate != null) Text("本期完成率：${(avgRate * 100).toInt()}%", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(8.dp))
@@ -177,7 +199,7 @@ fun ReviewScreen(nav: (String) -> Unit) {
                         androidx.compose.material3.TextButton(onClick = { writing = false }) { Text("取消") }
                         Button(onClick = {
                             Repos.addReview(Review(
-                                type = mode, reviewDate = java.time.LocalDateTime.now(),
+                                type = mode - 1, reviewDate = java.time.LocalDateTime.now(),
                                 completionRate = avgRate ?: 0.0,
                                 successReasons = success.ifBlank { null },
                                 failureReasons = failure.ifBlank { null },
@@ -199,7 +221,8 @@ fun ReviewScreen(nav: (String) -> Unit) {
 @Composable
 private fun TimeStatsCard(mode: Int, start: LocalDate, end: LocalDate) {
     val rev = DataBus.rev
-    var span by rememberSaveable { mutableStateOf(if (mode == 0) 1 else 2) }
+    // 初始周期跟随上方所选的盘点页（今日/周/月）；切页时重置
+    var span by rememberSaveable(mode) { mutableStateOf(mode.coerceIn(0, 2)) }
     val tags = remember(rev) { Repos.timeTags() }
     val records = remember(rev) { Repos.timeRecords() }
     val today = LocalDate.now()
@@ -284,8 +307,9 @@ private fun TimeStatsCard(mode: Int, start: LocalDate, end: LocalDate) {
         }
 
         Spacer(Modifier.height(8.dp))
+        // 折线图展示上方所选周期的数据（点「今日/本周/本月/全部」即切换；近14天/近12月也一并改为折线图）
         if (span == 3) {
-            // 全部：近 12 个月每月时长，月度对比（按天太密看不清）
+            // 全部：近 12 个月每月时长（按天太密看不清）
             val months = (11 downTo 0).map { today.minusMonths(it.toLong()).withDayOfMonth(1) }
             val monthly = months.map { m ->
                 val key = m.year.toString() + "-" + m.monthValue.toString().padStart(2, '0')
@@ -294,15 +318,24 @@ private fun TimeStatsCard(mode: Int, start: LocalDate, end: LocalDate) {
             if (monthly.any { it > 0 }) {
                 Text("近 12 个月每月时长", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
-                BarChart(monthly, months.map { "${it.year.toString().takeLast(2)}/${it.monthValue.toString().padStart(2, '0')}" })
+                LineChart(monthly, months.map { "${it.year.toString().takeLast(2)}/${it.monthValue.toString().padStart(2, '0')}" })
             }
         } else {
-            val days14 = (13 downTo 0).map { today.minusDays(it.toLong()) }
-            val daily = days14.map { d -> records.filter { it.date == d.toString() }.sumOf { it.minutes() }.toDouble() }
+            var title = when (span) { 0 -> "近 14 天每日时长"; 1 -> "本周每日时长"; else -> "本月每日时长" }
+            var periodDays = when (span) {
+                0 -> (13 downTo 0).map { today.minusDays(it.toLong()) } // 今日：当天画不了折线，附看近 14 天走势
+                1 -> generateSequence(today.with(java.time.DayOfWeek.MONDAY)) { it.plusDays(1) }.takeWhile { !it.isAfter(today) }.toList()
+                else -> (1..today.dayOfMonth).map { today.withDayOfMonth(it) }
+            }
+            if (periodDays.size < 2) { // 周一/1号只有一个点，退回近 7 天
+                title = "近 7 天每日时长"
+                periodDays = (6 downTo 0).map { today.minusDays(it.toLong()) }
+            }
+            val daily = periodDays.map { d -> records.filter { it.date == d.toString() }.sumOf { it.minutes() }.toDouble() }
             if (daily.any { it > 0 }) {
-                Text("近 14 天每日时长", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
-                BarChart(daily, days14.map { "${it.monthValue}/${it.dayOfMonth}" })
+                LineChart(daily, periodDays.map { "${it.monthValue}/${it.dayOfMonth}" })
             }
         }
     }

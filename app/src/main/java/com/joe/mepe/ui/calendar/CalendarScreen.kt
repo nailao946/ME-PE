@@ -43,6 +43,7 @@ import com.joe.mepe.data.TaskItem
 import com.joe.mepe.data.TaskLogic
 import com.joe.mepe.data.TaskTypes
 import com.joe.mepe.ui.EmptyHint
+import com.joe.mepe.ui.RoundedProgressBar
 import com.joe.mepe.ui.SectionCard
 import com.joe.mepe.ui.StatChip
 import com.joe.mepe.ui.colorForGoal
@@ -63,7 +64,9 @@ fun CalendarScreen(nav: (String) -> Unit) {
     val completions = remember(rev) { Repos.completions() }
     val today = LocalDate.now()
 
+    // 当日任务列表：与任务页同序（优先级降序，再按 sortOrder，两端拖动排序互通）
     fun dueOn(date: LocalDate): List<TaskItem> = tasks.filter { TaskLogic.occursOnDate(it, date) }
+        .sortedWith(compareByDescending<TaskItem> { it.priority }.thenBy { it.sortOrder })
 
     fun dayRate(date: LocalDate): Double? {
         val list = dueOn(date)
@@ -184,6 +187,23 @@ fun CalendarScreen(nav: (String) -> Unit) {
 
         // 当日详情
         SectionCard(title = "${selectedDate.monthValue}月${selectedDate.dayOfMonth}日 任务详情") {
+            // 当日任务量（与盘点同口径）：选到哪天就显示那天的 完成量 / 当日总任务量
+            val dayDue = tasks.count { TaskLogic.dueOnDate(it, selectedDate) }
+            val dayDone = tasks.count { TaskLogic.doneOnDate(it, selectedDate, completions) }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "完成 $dayDone / $dayDue",
+                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(10.dp))
+                RoundedProgressBar(
+                    progress = if (dayDue > 0) dayDone.toFloat() / dayDue else 0f,
+                    modifier = Modifier.weight(1f),
+                    heightDp = 8
+                )
+            }
+            Spacer(Modifier.height(8.dp))
             val list = dueOn(selectedDate)
             if (list.isEmpty()) EmptyHint("这一天没有任务")
             else list.forEach { t ->

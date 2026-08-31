@@ -1,14 +1,21 @@
 package com.joe.mepe.ui
 
 import kotlin.math.roundToInt
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -59,6 +66,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -91,6 +99,7 @@ import com.joe.mepe.ui.theme.LocalIconColor
 import com.joe.mepe.ui.theme.colorToHex
 import com.joe.mepe.ui.theme.parseHexColor
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.YearMonth
 
 /** 页面标题栏：可带返回键、单色图标 */
@@ -231,11 +240,70 @@ fun StatChip(label: String, value: String, modifier: Modifier = Modifier, trend:
             Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary)
             Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (trend != null) Text(
-                trend,
+            // 无涨跌时也占一行（空格），保证同一排里带/不带「较上期」的统计卡高度一致
+            Text(
+                trend ?: " ",
                 style = MaterialTheme.typography.labelSmall,
                 color = if (trendUp) Color(0xFF34C759) else Color(0xFFFF3B30)
             )
+        }
+    }
+}
+
+/**
+ * 带记录列表的通用卡片：标题行右侧一个排序图标（正/倒序切换，图标旋转动画）+ 一个折叠箭头，
+ * 列表展开/收起带高度 + 淡入淡出动画。items 按 timeOf 的时间戳排序，默认最新在最上（从晚到早）。
+ * key 用来给每处列表记住自己的展开/排序状态，互不影响。
+ */
+@Composable
+fun <T> RecordListCard(
+    title: String,
+    items: List<T>,
+    key: String,
+    timeOf: (T) -> LocalDateTime?,
+    modifier: Modifier = Modifier,
+    defaultAsc: Boolean = false,
+    empty: (@Composable () -> Unit)? = null,
+    row: @Composable (T) -> Unit,
+) {
+    var expanded by rememberSaveable(key) { mutableStateOf(true) }
+    var asc by rememberSaveable(key) { mutableStateOf(defaultAsc) }
+    val sorted = remember(items, asc) {
+        if (asc) items.sortedBy { timeOf(it) ?: LocalDateTime.MAX }
+        else items.sortedByDescending { timeOf(it) ?: LocalDateTime.MIN }
+    }
+    val sortAngle by animateFloatAsState(if (asc) 0f else 180f, label = "recordSort")
+    val expandAngle by animateFloatAsState(if (expanded) 180f else 0f, label = "recordExpand")
+    SectionCard(title = null, modifier = modifier) {
+        Row(
+            Modifier.fillMaxWidth().clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            if (sorted.size > 1) IconButton(onClick = { asc = !asc }, modifier = Modifier.size(30.dp)) {
+                Icon(
+                    Icons.Filled.SwapVert,
+                    if (asc) "切换为从晚到早" else "切换为从早到晚",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp).rotate(sortAngle)
+                )
+            }
+            Icon(
+                Icons.Filled.ExpandMore, if (expanded) "收起" else "展开",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(22.dp).rotate(expandAngle)
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+        ) {
+            Column {
+                if (sorted.isEmpty()) empty?.invoke()
+                else sorted.forEach { row(it) }
+            }
         }
     }
 }

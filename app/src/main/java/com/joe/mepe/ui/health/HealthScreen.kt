@@ -1,9 +1,13 @@
 package com.joe.mepe.ui.health
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -35,6 +39,7 @@ import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Medication
@@ -62,6 +67,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -76,6 +82,7 @@ import com.joe.mepe.ui.BarChart
 import com.joe.mepe.ui.EmptyHint
 import com.joe.mepe.ui.LineChart
 import com.joe.mepe.ui.QuickLinks
+import com.joe.mepe.ui.RecordListCard
 import com.joe.mepe.ui.Routes
 import com.joe.mepe.ui.ScreenHeader
 import com.joe.mepe.ui.SectionCard
@@ -93,11 +100,11 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
-/** 健康页：总览 + 子页签 + 对比 + AI 分析 */
-private val healthTabs = listOf("总览", "睡眠", "身体", "喝水", "心情", "尿酸", "锻炼", "久坐", "用药", "对比")
+/** 健康页：常驻总览 + 子页签 + 对比 + AI 分析。总览不再是一个页签，而是常驻在页签上方（可折叠） */
+private val healthTabs = listOf("睡眠", "身体", "喝水", "心情", "尿酸", "锻炼", "久坐", "用药", "对比")
 
 private val healthTabIcons = listOf(
-    Icons.Filled.Favorite, Icons.Filled.Bedtime, Icons.Filled.MonitorWeight, Icons.Filled.WaterDrop,
+    Icons.Filled.Bedtime, Icons.Filled.MonitorWeight, Icons.Filled.WaterDrop,
     Icons.Filled.Mood, Icons.Filled.Science, Icons.Filled.FitnessCenter, Icons.Filled.Chair,
     Icons.Filled.Medication, Icons.Filled.CompareArrows,
 )
@@ -106,24 +113,27 @@ private val healthTabIcons = listOf(
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 fun HealthScreen(nav: (String) -> Unit) {
     var tab by rememberSaveable { mutableStateOf(0) }
+    val maxTab = healthTabs.lastIndex
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(title = "健康", icon = Icons.Filled.Favorite, subtitle = "记录与分析你的健康数据", actions = { QuickLinks(Routes.HEALTH, nav) })
+        // 总览常驻在页签上方：任何子页都能随时看到今日概览，点指标/快速记录直达对应页签
+        HealthOverview(onSwitchTab = { tab = it.coerceIn(0, maxTab) })
         ScrollableTabRow(
-            selectedTabIndex = tab,
+            selectedTabIndex = tab.coerceIn(0, maxTab),
             edgePadding = 12.dp,
             containerColor = Color.Transparent,
             divider = {}
         ) {
             healthTabs.forEachIndexed { i, name ->
                 Tab(
-                    selected = tab == i,
+                    selected = tab.coerceIn(0, maxTab) == i,
                     onClick = { tab = i },
-                    text = { Text(name, fontWeight = if (tab == i) FontWeight.Bold else FontWeight.Normal) },
+                    text = { Text(name, fontWeight = if (tab.coerceIn(0, maxTab) == i) FontWeight.Bold else FontWeight.Normal) },
                     icon = {
                         Icon(
                             healthTabIcons[i], null,
-                            tint = if (tab == i) LocalIconColor.current else MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = if (tab.coerceIn(0, maxTab) == i) LocalIconColor.current else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(17.dp)
                         )
                     }
@@ -132,26 +142,29 @@ fun HealthScreen(nav: (String) -> Unit) {
         }
 
         // 横向滑动切换 tab：左右滑与顶部标签联动，各页面状态独立保留
-        val pagerState = rememberPagerState(initialPage = tab) { healthTabs.size }
+        val pagerState = rememberPagerState(initialPage = tab.coerceIn(0, maxTab)) { healthTabs.size }
+        // 只在翻页「停稳」后把页码同步回 tab：翻页动画中途的 currentPage 一旦同步回 tab，
+        // 会触发对中间页的滚动把目标页打断 —— 表现为「点第 N 个落在第 N-1 个」（快速记录与顶部标签都受影响）
         LaunchedEffect(pagerState) {
-            snapshotFlow { pagerState.currentPage }.collect { tab = it }
+            snapshotFlow { pagerState.currentPage to pagerState.isScrollInProgress }
+                .collect { (page, scrolling) -> if (!scrolling) tab = page }
         }
         LaunchedEffect(tab) {
-            if (pagerState.currentPage != tab) pagerState.animateScrollToPage(tab)
+            val t = tab.coerceIn(0, maxTab)
+            if (pagerState.currentPage != t) pagerState.animateScrollToPage(t)
         }
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { t ->
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 when (t) {
-                    0 -> HealthOverview { tab = it }
-                    1 -> SleepTab()
-                    2 -> BodyTab()
-                    3 -> WaterTab()
-                    4 -> MoodTab()
-                    5 -> UricTab()
-                    6 -> ExerciseTab()
-                    7 -> SedentaryTab()
-                    8 -> MedicationTab()
-                    9 -> CompareTab()
+                    0 -> SleepTab()
+                    1 -> BodyTab()
+                    2 -> WaterTab()
+                    3 -> MoodTab()
+                    4 -> UricTab()
+                    5 -> ExerciseTab()
+                    6 -> SedentaryTab()
+                    7 -> MedicationTab()
+                    else -> CompareTab()
                 }
                 Spacer(Modifier.height(28.dp))
             }
@@ -179,10 +192,11 @@ fun TrendCard(title: String, values: List<Double>, days: List<LocalDate>, unit: 
     }
 }
 
-// ============ 总览 ============
+// ============ 总览（常驻可折叠面板） ============
 
 private data class Metric(val icon: ImageVector, val label: String, val value: String, val color: Color, val tab: Int)
 
+/** 常驻总览：今日概览卡 + 指标网格 + 快速记录；点标题行折叠，收起后只留今日概览一行，随时点开 */
 @Composable
 fun HealthOverview(onSwitchTab: (Int) -> Unit) {
     val rev = DataBus.rev
@@ -203,71 +217,91 @@ fun HealthOverview(onSwitchTab: (Int) -> Unit) {
     val medTotal = records.count { it.type == HealthTypes.MEDICATION && it.date == todayStr }
 
     val metrics = listOf(
-        Metric(Icons.Filled.Bedtime, "昨晚睡眠", sleepText, Color(0xFF7C5CE0), 1),
-        Metric(Icons.Filled.MonitorWeight, "最新体重", weight, Color(0xFF2BA8A8), 2),
-        Metric(Icons.Filled.WaterDrop, "今日喝水", waterText, Color(0xFF4FC3F7), 3),
-        Metric(Icons.Filled.Mood, "今日心情", moodText, Color(0xFFE0A93C), 4),
-        Metric(Icons.Filled.Science, "尿酸 μmol/L", uric, Color(0xFFE05C8A), 5),
-        Metric(Icons.Filled.Chair, "久坐活动", "$sedCount 次", Color(0xFF2E9E5B), 7),
+        Metric(Icons.Filled.Bedtime, "昨晚睡眠", sleepText, Color(0xFF7C5CE0), 0),
+        Metric(Icons.Filled.MonitorWeight, "最新体重", weight, Color(0xFF2BA8A8), 1),
+        Metric(Icons.Filled.WaterDrop, "今日喝水", waterText, Color(0xFF4FC3F7), 2),
+        Metric(Icons.Filled.Mood, "今日心情", moodText, Color(0xFFE0A93C), 3),
+        Metric(Icons.Filled.Science, "尿酸 μmol/L", uric, Color(0xFFE05C8A), 4),
+        Metric(Icons.Filled.Chair, "久坐活动", "$sedCount 次", Color(0xFF2E9E5B), 6),
     )
 
-    Column {
-        SectionCard(title = null) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("今日概览", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text(
-                        "${today.monthValue}月${today.dayOfMonth}日 · " + listOf("一","二","三","四","五","六","日")[today.dayOfWeek.value-1] + " · 服药 ${medTotal} 次",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                com.joe.mepe.ui.ProgressRing(
-                    progress = (waterTotal / waterGoal).coerceIn(0.0, 1.0),
-                    sizeDp = 64, stroke = 8f, color = Color(0xFF4FC3F7),
-                    centerContent = {
-                        Text("${(waterTotal / waterGoal * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                    }
+    var expanded by rememberSaveable { mutableStateOf(true) }
+    val expandAngle by animateFloatAsState(if (expanded) 180f else 0f, label = "ovExpand")
+
+    SectionCard(title = null) {
+        Row(
+            Modifier.fillMaxWidth().clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("今日概览", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "${today.monthValue}月${today.dayOfMonth}日 · " + listOf("一","二","三","四","五","六","日")[today.dayOfWeek.value-1] + " · 服药 ${medTotal} 次",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-        // 指标卡片网格（两列对称）
-        metrics.chunked(2).forEach { rowMetrics ->
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                rowMetrics.forEach { m ->
-                    Card2(
-                        Modifier.weight(1f).clickable { onSwitchTab(m.tab) },
-                        icon = m.icon, iconBg = m.color.copy(alpha = 0.15f), iconTint = m.color,
-                        title = m.label, value = m.value
-                    )
+            com.joe.mepe.ui.ProgressRing(
+                progress = (waterTotal / waterGoal).coerceIn(0.0, 1.0),
+                sizeDp = 64, stroke = 8f, color = Color(0xFF4FC3F7),
+                centerContent = {
+                    Text("${(waterTotal / waterGoal * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                 }
-                repeat(2 - rowMetrics.size) { Spacer(Modifier.weight(1f)) }
-            }
+            )
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                Icons.Filled.ExpandMore, if (expanded) "收起总览" else "展开总览",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(22.dp).rotate(expandAngle)
+            )
         }
-        // 记录入口
-        val entries = listOf(
-            Triple(Icons.Filled.Bedtime, "睡眠", 1), Triple(Icons.Filled.MonitorWeight, "体重", 2),
-            Triple(Icons.Filled.WaterDrop, "喝水", 3), Triple(Icons.Filled.Mood, "心情", 4),
-            Triple(Icons.Filled.Science, "尿酸", 5), Triple(Icons.Filled.FitnessCenter, "锻炼", 6),
-            Triple(Icons.Filled.Chair, "久坐", 7), Triple(Icons.Filled.Medication, "用药", 8),
-            Triple(Icons.Filled.CompareArrows, "对比", 9),
-        )
-        SectionCard(title = "快速记录") {
-            entries.chunked(3).forEach { rowEntries ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    rowEntries.forEach { (icon, label, idx) ->
-                        Column(
-                            Modifier.weight(1f)
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), MaterialTheme.shapes.small)
-                                .clickable { onSwitchTab(idx) }
-                                .padding(vertical = 10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Icon(icon, null, tint = LocalIconColor.current, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.height(4.dp))
-                            Text(label, style = MaterialTheme.typography.labelMedium)
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+        ) {
+            Column {
+                Spacer(Modifier.height(10.dp))
+                // 指标卡片网格（两列对称）
+                metrics.chunked(2).forEach { rowMetrics ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        rowMetrics.forEach { m ->
+                            Card2(
+                                Modifier.weight(1f).clickable { onSwitchTab(m.tab) },
+                                icon = m.icon, iconBg = m.color.copy(alpha = 0.15f), iconTint = m.color,
+                                title = m.label, value = m.value
+                            )
                         }
+                        repeat(2 - rowMetrics.size) { Spacer(Modifier.weight(1f)) }
                     }
-                    repeat(3 - rowEntries.size) { Spacer(Modifier.weight(1f)) }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text("快速记录", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                // 记录入口
+                val entries = listOf(
+                    Triple(Icons.Filled.Bedtime, "睡眠", 0), Triple(Icons.Filled.MonitorWeight, "体重", 1),
+                    Triple(Icons.Filled.WaterDrop, "喝水", 2), Triple(Icons.Filled.Mood, "心情", 3),
+                    Triple(Icons.Filled.Science, "尿酸", 4), Triple(Icons.Filled.FitnessCenter, "锻炼", 5),
+                    Triple(Icons.Filled.Chair, "久坐", 6), Triple(Icons.Filled.Medication, "用药", 7),
+                    Triple(Icons.Filled.CompareArrows, "对比", 8),
+                )
+                entries.chunked(3).forEach { rowEntries ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        rowEntries.forEach { (icon, label, idx) ->
+                            Column(
+                                Modifier.weight(1f)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), MaterialTheme.shapes.small)
+                                    .clickable { onSwitchTab(idx) }
+                                    .padding(vertical = 10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(icon, null, tint = LocalIconColor.current, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.height(4.dp))
+                                Text(label, style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                        repeat(3 - rowEntries.size) { Spacer(Modifier.weight(1f)) }
+                    }
                 }
             }
         }
@@ -494,25 +528,25 @@ fun WaterTab() {
         }
     }
 
-    SectionCard(title = "今日记录（${todayRecords.size}）") {
-        if (todayRecords.isEmpty()) {
-            EmptyHint("今天还没喝水，点上面按钮记一笔", Icons.Filled.WaterDrop)
-        } else {
-            todayRecords.reversed().forEach { r ->
-                Row(
-                    Modifier.fillMaxWidth().padding(vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Filled.WaterDrop, null, tint = waterColor, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("${r.value.toInt()} ml", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                        Text(r.createdAt.toString().take(16).replace('T', ' '), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    IconButton(onClick = { deleteRecord(r.id) }, modifier = Modifier.size(30.dp)) {
-                        Icon(Icons.Outlined.Delete, "删除", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(17.dp))
-                    }
-                }
+    RecordListCard(
+        title = "今日记录（${todayRecords.size}）",
+        items = todayRecords,
+        key = "water_today",
+        timeOf = { it.createdAt },
+        empty = { EmptyHint("今天还没喝水，点上面按钮记一笔", Icons.Filled.WaterDrop) },
+    ) { r ->
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.WaterDrop, null, tint = waterColor, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("${r.value.toInt()} ml", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Text(r.createdAt.toString().take(16).replace('T', ' '), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = { deleteRecord(r.id) }, modifier = Modifier.size(30.dp)) {
+                Icon(Icons.Outlined.Delete, "删除", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(17.dp))
             }
         }
     }
@@ -691,16 +725,19 @@ fun UricTab() {
         Triple("正常范围", if (isMale) "149~416" else "89~357", null),
         Triple("记录次数", "${records.size}", null),
     ))
-    SectionCard(title = "历史记录") {
-        if (records.isEmpty()) EmptyHint("暂无记录")
-        else records.takeLast(10).reversed().forEach { r ->
-            val normalMax = if (isMale) 416.0 else 357.0
-            val normalMin = if (isMale) 149.0 else 89.0
-            val color = if (r.value in normalMin..normalMax) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                Text(r.date, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                Text("${r.value.toInt()}", color = color, fontWeight = FontWeight.Bold)
-            }
+    RecordListCard(
+        title = "历史记录（${records.size}）",
+        items = records,
+        key = "uric_history",
+        timeOf = { r -> r.createdAt.takeIf { it.year > 1 } ?: runCatching { LocalDate.parse(r.date).atStartOfDay() }.getOrNull() },
+        empty = { EmptyHint("暂无记录") },
+    ) { r ->
+        val normalMax = if (isMale) 416.0 else 357.0
+        val normalMin = if (isMale) 149.0 else 89.0
+        val color = if (r.value in normalMin..normalMax) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Text(r.date, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Text("${r.value.toInt()}", color = color, fontWeight = FontWeight.Bold)
         }
     }
     TrendCard("近30天尿酸趋势", values, days)

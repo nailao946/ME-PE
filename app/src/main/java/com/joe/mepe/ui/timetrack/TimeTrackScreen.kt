@@ -1,8 +1,10 @@
 package com.joe.mepe.ui.timetrack
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -37,6 +39,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -44,6 +47,7 @@ import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material3.Button
@@ -277,6 +281,12 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
     val records = remember(rev) { Repos.timeRecords() }
 
     val viewRecords = records.filter { it.date == viewDate.toString() }
+    // 当日记录列表：可按时间正/倒序（图标切换）+ 可折叠展开
+    var recExpanded by rememberSaveable { mutableStateOf(true) }
+    var recAsc by rememberSaveable { mutableStateOf(false) }
+    val sortedViewRecords = remember(viewRecords, recAsc) {
+        if (recAsc) viewRecords.sortedBy { it.startTime } else viewRecords.sortedByDescending { it.startTime }
+    }
     // 当日总时长/分布图与桌面端一致：排除默认标签并应用统计标签范围（运行中记录计入到当前时刻）
     val statsIncludedIds = remember(rev) {
         Repos.getSetting("StatsIncludedTags", "").split(',')
@@ -473,21 +483,42 @@ fun TimeTrackScreen(nav: (String) -> Unit) {
             // 番茄钟
             item(key = "pomodoro") { PomodoroCard(tick = tick, onOpenSettings = { showPomoSettings = true }) }
 
-            // 当日记录（所选日期，默认今天）
+            // 当日记录（所选日期，默认今天）：标题行右侧排序（正/倒序）+ 折叠箭头
             item(key = "sec_records") {
+                val sortAngle by animateFloatAsState(if (recAsc) 0f else 180f, label = "recSort")
+                val expandAngle by animateFloatAsState(if (recExpanded) 180f else 0f, label = "recExpand")
                 SectionLabelRow(
                     if (viewDate == today) "今日记录" else "${viewDate.monthValue}月${viewDate.dayOfMonth}日记录",
-                    null, null
-                )
+                    null
+                ) {
+                    if (viewRecords.size > 1) {
+                        IconButton(onClick = { recAsc = !recAsc }, modifier = Modifier.size(30.dp)) {
+                            Icon(
+                                Icons.Filled.SwapVert, if (recAsc) "切换为从晚到早" else "切换为从早到晚",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp).rotate(sortAngle)
+                            )
+                        }
+                    }
+                    IconButton(onClick = { recExpanded = !recExpanded }, modifier = Modifier.size(30.dp)) {
+                        Icon(
+                            Icons.Filled.ExpandMore, if (recExpanded) "收起" else "展开",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp).rotate(expandAngle)
+                        )
+                    }
+                }
             }
             if (viewRecords.isEmpty()) {
                 item(key = "no_records") { EmptyHint(if (viewDate == today) "今天还没有计时记录" else "这一天没有计时记录") }
             }
-            items(viewRecords.size, key = { "r${viewRecords[it].id}" }) { i ->
-                val r = viewRecords[i]
-                val t = tags.find { it.id == r.tagId }
-                RecordRow(r, t?.name ?: "未知", parseHexColor(t?.color, MaterialTheme.colorScheme.primary)) {
-                    Repos.deleteTimeRecord(r.id)
+            if (recExpanded) {
+                items(sortedViewRecords.size, key = { "r${sortedViewRecords[it].id}" }) { i ->
+                    val r = sortedViewRecords[i]
+                    val t = tags.find { it.id == r.tagId }
+                    RecordRow(r, t?.name ?: "未知", parseHexColor(t?.color, MaterialTheme.colorScheme.primary)) {
+                        Repos.deleteTimeRecord(r.id)
+                    }
                 }
             }
 
