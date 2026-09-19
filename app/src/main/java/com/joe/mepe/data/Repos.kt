@@ -84,9 +84,12 @@ object Repos {
     fun addCompletion(taskId: Int, date: LocalDate) {
         val all = completions()
         all.add(TaskCompletionRecord(id = (all.maxOfOrNull { it.id } ?: 0) + 1, taskId = taskId,
-            date = date.toString(), completedAt = LocalDateTime.now()))
+            date = date.toString(), completedAt = LocalDateTime.now(), uid = newUid()))
         saveCompletions(all)
     }
+
+    /** 跨设备合并用的全局唯一标识（新记录统一生成，旧记录在合并时自动补） */
+    fun newUid(): String = java.util.UUID.randomUUID().toString().replace("-", "")
 
     fun removeCompletion(taskId: Int, date: LocalDate) {
         saveCompletions(completions().filterNot { it.taskId == taskId && it.date == date.toString() })
@@ -189,7 +192,7 @@ object Repos {
         val all = timeRecords()
         all.filter { it.endTime == null }.forEach { it.endTime = LocalDateTime.now() }
         val rec = TimeRecord(id = (all.maxOfOrNull { it.id } ?: 0) + 1, tagId = tagId,
-            startTime = LocalDateTime.now(), date = LocalDate.now().toString())
+            startTime = LocalDateTime.now(), date = LocalDate.now().toString(), uid = newUid())
         all.add(rec)
         saveTimeRecords(all)
         return rec
@@ -232,7 +235,7 @@ object Repos {
     fun addHealth(type: String, date: LocalDate, value: Double, detail: String? = null, note: String? = null): HealthRecord {
         val all = health()
         val rec = HealthRecord(id = (all.maxOfOrNull { it.id } ?: 0) + 1, type = type, date = date.toString(),
-            value = value, detail = detail, note = note, createdAt = LocalDateTime.now())
+            value = value, detail = detail, note = note, createdAt = LocalDateTime.now(), uid = newUid())
         all.add(rec)
         saveHealth(all)
         return rec
@@ -261,6 +264,7 @@ object Repos {
     fun addWaterContainer(w: WaterContainer): Int {
         val all = JsonStore.loadList("water_containers") { f -> JsonStore.json.decodeFromString(waterK, f.readText()) }
         w.id = (all.maxOfOrNull { it.id } ?: 0) + 1
+        w.uid = newUid()
         all.add(w)
         saveWaterContainers(all)
         return w.id
@@ -429,6 +433,7 @@ object Repos {
     fun addFocus(s: FocusSession): Int {
         val all = focusSessions()
         s.id = (all.maxOfOrNull { it.id } ?: 0) + 1
+        s.uid = newUid()
         all.add(s)
         JsonStore.saveText("focus_sessions", JsonStore.json.encodeToString(focusK, all))
         DataBus.bump()

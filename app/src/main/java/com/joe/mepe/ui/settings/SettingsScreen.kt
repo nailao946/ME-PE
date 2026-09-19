@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,6 +38,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -74,13 +76,15 @@ import com.joe.mepe.ui.theme.Accents
 import com.joe.mepe.ui.theme.IconColorChoices
 import com.joe.mepe.ui.theme.colorToHex
 import com.joe.mepe.ui.theme.parseHexColor
+import com.joe.mepe.ui.LanguageService
+import com.joe.mepe.ui.LocalLanguageContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 
 /** 设置：微信式分类入口（主页一行一个大类，点进去是该类的设置子页） */
 @Composable
-fun SettingsScreen(nav: (String) -> Unit) {
+fun SettingsScreen(nav: (String) -> Unit, onLanguageChanged: (String) -> Unit = {}) {
     var page by rememberSaveable { mutableStateOf("") }
 
     // 系统返回逐级退出：在分类子页（关于/外观/云同步…）先退回设置首页，再由外层退回主界面
@@ -99,6 +103,7 @@ fun SettingsScreen(nav: (String) -> Unit) {
             ) {
                 SectionCard(title = null) {
                     SettingRow(Icons.Filled.Palette, "外观", "主题模式 · 强调色 · 图标颜色", Color(0xFF7C5CE0)) { page = "appearance" }
+                    SettingRow(Icons.Filled.Settings, "语言 / Language", "中文或 English", Color(0xFF5C8AE0)) { page = "language" }
                     SettingRow(Icons.Filled.Favorite, "健康目标", "每日喝水 · 起身活动", Color(0xFF4FC3F7)) { page = "goals" }
                     SettingRow(Icons.Filled.CloudSync, "云同步", "GitHub 私有仓库，PC ↔ 安卓互通", Color(0xFF2E9E5B)) { page = "sync" }
                     SettingRow(Icons.Filled.Backup, "备份与恢复", "导出 / 导入 zip，与桌面版互通", Color(0xFFE0A93C)) { page = "backup" }
@@ -113,6 +118,11 @@ fun SettingsScreen(nav: (String) -> Unit) {
     } else {
         when (page) {
             "appearance" -> AppearancePage { page = "" }
+            "language" -> LanguagePage { selected ->
+                LanguageService.setLanguage(selected)
+                onLanguageChanged(selected)
+                page = ""
+            }
             "goals" -> GoalsPage { page = "" }
             "sync" -> SyncPage { page = "" }
             "backup" -> BackupPage { page = "" }
@@ -147,6 +157,29 @@ private fun SettingRow(icon: ImageVector, title: String, sub: String, tint: Colo
     }
 }
 
+// ============ 语言 ============
+
+@Composable
+private fun LanguagePage(onSelected: (String) -> Unit) {
+    val context = LocalLanguageContext.current
+    val current = LanguageService.getLanguage()
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader(title = context.getString(com.joe.mepe.R.string.language_title), icon = Icons.Filled.Settings,
+            subtitle = context.getString(com.joe.mepe.R.string.language_subtitle), onBack = { onSelected(current) })
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            SectionCard(title = context.getString(com.joe.mepe.R.string.language_title)) {
+                Segmented(listOf(
+                    context.getString(com.joe.mepe.R.string.language_system),
+                    context.getString(com.joe.mepe.R.string.language_zh),
+                    context.getString(com.joe.mepe.R.string.language_en)
+                ), when (current) { LanguageService.ZH -> 1; LanguageService.EN -> 2; else -> 0 }) { index ->
+                    onSelected(when (index) { 1 -> LanguageService.ZH; 2 -> LanguageService.EN; else -> LanguageService.SYSTEM })
+                }
+            }
+        }
+    }
+}
+
 // ============ 外观 ============
 
 @Composable
@@ -162,10 +195,18 @@ private fun AppearancePage(onBack: () -> Unit) {
         ScreenHeader(title = "外观", icon = Icons.Filled.Palette, subtitle = "主题与配色", onBack = onBack)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             SectionCard(title = "主题模式") {
-                Segmented(listOf("跟随系统", "浅色", "深色"), when (themeMode) { "light" -> 1; "dark" -> 2; else -> 0 }) { i ->
-                    themeMode = when (i) { 1 -> "light"; 2 -> "dark"; else -> "system" }
+                Segmented(
+                    listOf("跟随系统", "浅色", "深色", "毛玻璃"),
+                    when (themeMode) { "light" -> 1; "dark" -> 2; "glass" -> 3; else -> 0 }
+                ) { i ->
+                    themeMode = when (i) { 1 -> "light"; 2 -> "dark"; 3 -> "glass"; else -> "system" }
                     Repos.setSetting("theme_mode", themeMode)
                 }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "毛玻璃：渐变底 + 半透明磨砂卡片，深浅自动跟随系统",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             SectionCard(title = "强调色") {
                 Row(
@@ -320,6 +361,8 @@ private fun SyncPage(onBack: () -> Unit) {
     var loggingIn by remember { mutableStateOf(false) }
     var pendingCode by remember { mutableStateOf("") }
     var msg by remember { mutableStateOf("") }
+    var conflicts by remember(rev) { mutableStateOf(CloudSync.pendingConflicts(ctx)) }
+    var showConflicts by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     /** 把页面上的输入写进配置：登录/上传/下载前都要先调用，云端操作读取的是落盘配置 */
@@ -513,7 +556,11 @@ private fun SyncPage(onBack: () -> Unit) {
                     LabeledField("GitHub Token（PAT，可选）", syncPat, { syncPat = it }, placeholder = "已登录可留空")
                 }
                 Spacer(Modifier.height(8.dp))
-                ToggleRow("自动上传", syncAuto, { syncAuto = it }, sub = "每次修改数据后自动推送到仓库")
+                ToggleRow("自动同步", syncAuto, { enabled ->
+                    syncAuto = enabled
+                    saveConf()
+                    if (enabled) SyncStatusBus.scheduleAutoSync(ctx)
+                }, sub = "进入应用时自动上传并下载数据")
                 // 当前已启用的云端（凭据齐全即启用，上传时同时推送）
                 val enabledClouds = buildList {
                     if (syncPat.isNotBlank() || syncConf.pat.isNotBlank()) add("GitHub")
@@ -549,6 +596,7 @@ private fun SyncPage(onBack: () -> Unit) {
                                 SyncStatusBus.setRunning("正在上传…")
                                 msg = try { CloudSync.push(ctx) } catch (e: Exception) { "✗ 上传失败：" + (e.message ?: "网络异常") }
                                 SyncStatusBus.report(msg)
+                                conflicts = CloudSync.pendingConflicts(ctx)
                                 syncing = false
                             }
                         },
@@ -563,12 +611,40 @@ private fun SyncPage(onBack: () -> Unit) {
                                 SyncStatusBus.setRunning("正在下载…")
                                 msg = try { CloudSync.pull(ctx) } catch (e: Exception) { "✗ 下载失败：" + (e.message ?: "网络异常") }
                                 SyncStatusBus.report(msg)
+                                conflicts = CloudSync.pendingConflicts(ctx)
                                 syncing = false
                             }
                         },
                         enabled = !syncing,
                         shape = MaterialTheme.shapes.small
                     ) { Text(if (syncing) "下载中…" else "下载数据") }
+                    OutlinedButton(
+                        onClick = {
+                            syncing = true
+                            scope.launch {
+                                saveConf()
+                                SyncStatusBus.setRunning("正在诊断…")
+                                msg = try { CloudSync.diagnose(ctx) } catch (e: Exception) { "✗ 诊断失败：" + (e.message ?: "网络异常") }
+                                SyncStatusBus.report("")
+                                syncing = false
+                            }
+                        },
+                        enabled = !syncing,
+                        shape = MaterialTheme.shapes.small
+                    ) { Text(if (syncing) "诊断中…" else "诊断连接") }
+                }
+                if (conflicts.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "⚠ 有 ${conflicts.size} 个同步冲突等待处理",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedButton(
+                        onClick = { showConflicts = true },
+                        shape = MaterialTheme.shapes.small
+                    ) { Text("处理冲突") }
                 }
                 if (msg.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
@@ -576,6 +652,60 @@ private fun SyncPage(onBack: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(24.dp))
+        }
+    }
+
+    // 冲突处理：逐个文件选择保留本机还是云端
+    if (showConflicts) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showConflicts = false }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("处理同步冲突", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "这些文件在本机和云端都被改过、无法自动合并。选保留哪一边后不会再次提示。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Column(
+                        Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState())
+                    ) {
+                        conflicts.forEach { entry ->
+                            val provider = entry.substringBefore('|')
+                            val file = entry.substringAfter('|')
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(file, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                    Text(provider, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                TextButton(onClick = {
+                                    scope.launch {
+                                        msg = try { CloudSync.resolveConflicts(ctx, preferCloud = false, provider = provider, file = file) } catch (e: Exception) { "✗ " + (e.message ?: "失败") }
+                                        conflicts = CloudSync.pendingConflicts(ctx)
+                                        if (conflicts.isEmpty()) showConflicts = false
+                                    }
+                                }) { Text("用本机") }
+                                TextButton(onClick = {
+                                    scope.launch {
+                                        msg = try { CloudSync.resolveConflicts(ctx, preferCloud = true, provider = provider, file = file) } catch (e: Exception) { "✗ " + (e.message ?: "失败") }
+                                        conflicts = CloudSync.pendingConflicts(ctx)
+                                        if (conflicts.isEmpty()) showConflicts = false
+                                    }
+                                }) { Text("用云端") }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    TextButton(onClick = { showConflicts = false }, modifier = Modifier.align(Alignment.End)) { Text("完成") }
+                }
+            }
         }
     }
 }

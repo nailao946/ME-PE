@@ -1,6 +1,13 @@
 package com.joe.mepe.ui.modules
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.ui.unit.sp
+
+import androidx.compose.foundation.horizontalScroll
+
+import androidx.compose.foundation.border
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -32,6 +40,7 @@ import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Mood
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pets
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.SelfImprovement
 import androidx.compose.material.icons.filled.ShoppingCart
@@ -40,10 +49,12 @@ import androidx.compose.material.icons.filled.Work
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,6 +67,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.joe.mepe.data.CustomModule
@@ -121,44 +133,13 @@ fun ModulesScreen(nav: (String) -> Unit) {
             EmptyHint("还没有模块。像「健康」一样，你可以创建任意记录块：\n例如「跑步」记数值 km、「日记」记文本、「喝咖啡」记杯数。", Icons.Filled.Extension)
         }
         modules.forEach { m ->
-            val color = parseHexColor(m.colorHex, MaterialTheme.colorScheme.primary)
-            SectionCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier.size(40.dp).background(color.copy(alpha = 0.15f), MaterialTheme.shapes.small),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            ModuleIconList.getOrElse(m.icon) { Icons.Filled.Extension },
-                            null, tint = color, modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(m.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "字段：${m.fields.joinToString("、") { it.label + if (it.unit != null) "(${it.unit})" else "" }.ifBlank { "无" }} · ${m.records.size} 条记录",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Button(onClick = { recording = m }, shape = MaterialTheme.shapes.small, modifier = Modifier.weight(1f)) { Text("记一笔") }
-                    OutlinedButton(onClick = { historyOf = m }, shape = MaterialTheme.shapes.small, modifier = Modifier.weight(1f)) { Text("历史") }
-                    OutlinedButton(onClick = { editing = m }, shape = MaterialTheme.shapes.small) {
-                        Icon(Icons.Filled.Edit, "编辑", modifier = Modifier.size(15.dp))
-                    }
-                    OutlinedButton(
-                        onClick = { deleteTarget = m },
-                        shape = MaterialTheme.shapes.small,
-                        modifier = Modifier.width(46.dp),
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
-                        Icon(Icons.Outlined.Delete, "删除", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(17.dp))
-                    }
-                }
-            }
+            ModuleFeishuCard(
+                m = m,
+                onRecord = { recording = m },
+                onHistory = { historyOf = m },
+                onEdit = { editing = m },
+                onDelete = { deleteTarget = m },
+            )
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
             Button(onClick = { creating = true }, shape = MaterialTheme.shapes.small, modifier = Modifier.weight(1f)) {
@@ -183,7 +164,164 @@ fun ModulesScreen(nav: (String) -> Unit) {
     }
 }
 
+/**
+ * 模块卡片（飞书卡片风格）：16dp 大圆角白卡 + 1dp 细描边；
+ * 头部 = 主题色圆角图标块 + 标题 + 副信息 + 记录数徽标；
+ * 中间 = 最近一条记录摘要；底部细分割线 + 图标文字按钮操作区，右侧放次要操作。
+ */
+@Composable
+private fun ModuleFeishuCard(
+    m: CustomModule,
+    onRecord: () -> Unit,
+    onHistory: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val color = parseHexColor(m.colorHex, MaterialTheme.colorScheme.primary)
+    val shape = RoundedCornerShape(16.dp)
+    val last = m.records.maxWithOrNull(
+        compareBy<CustomModuleRecord> { it.date }.thenBy { it.time }.thenBy { it.id }
+    )
+    val fieldSummary = m.fields.joinToString(" · ") { f ->
+        f.label + (f.unit?.takeIf { it.isNotBlank() }?.let { "（$it）" } ?: "")
+    }.ifBlank { "暂无字段" }
+
+    Card(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.75f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            // ---- 头部：图标块 + 标题/副信息 + 记录数 ----
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(44.dp)
+                        .background(color.copy(alpha = 0.14f), RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        ModuleIconList.getOrElse(m.icon) { Icons.Filled.Extension },
+                        null, tint = color, modifier = Modifier.size(24.dp)
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(m.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(2.dp))
+                    Text(fieldSummary, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Spacer(Modifier.width(8.dp))
+                Surface(shape = RoundedCornerShape(8.dp), color = color.copy(alpha = 0.12f), contentColor = color) {
+                    Text(
+                        "${m.records.size} 条",
+                        Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // ---- 最近一条记录摘要 ----
+            if (last != null) {
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)) {
+                        Text("最近记录 · ${last.date}", style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            last.values.entries.joinToString(" · ") { e ->
+                                val f = m.fields.find { it.key == e.key }
+                                "${f?.label ?: e.key} ${e.value}${f?.unit?.takeIf { it.isNotBlank() }?.let { " $it" } ?: ""}"
+                            }.ifBlank { "（无字段值）" },
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            // ---- 细分割线 ----
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+            )
+            Spacer(Modifier.height(8.dp))
+
+            // ---- 操作区：主操作在左，次要操作靠右 ----
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                FeishuTextAction(Icons.Filled.Add, "记一笔", color, onRecord)
+                Spacer(Modifier.width(4.dp))
+                FeishuTextAction(Icons.Filled.MenuBook, "历史", MaterialTheme.colorScheme.onSurfaceVariant, onHistory)
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onEdit, modifier = Modifier.size(34.dp)) {
+                    Icon(Icons.Filled.Edit, "编辑", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                }
+                IconButton(onClick = onDelete, modifier = Modifier.size(34.dp)) {
+                    Icon(Icons.Outlined.Delete, "删除", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                }
+            }
+        }
+    }
+}
+
+/** 飞书卡片底部动作：小图标 + 文字，整块可点 */
+@Composable
+private fun FeishuTextAction(
+    icon: ImageVector,
+    text: String,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .background(Color.Transparent, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(text, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = tint)
+    }
+}
+
 // ============ 模块编辑 ============
+
+/** 快速模板：一键填好常用模块（图标 / 颜色 / 字段），与桌面端 ModulePresets 同一套 */
+private data class ModulePreset(
+    val name: String, val icon: Int, val color: String,
+    val fields: List<Triple<String, String, String?>>,
+)
+
+private val modulePresets = listOf(
+    ModulePreset("跑步", 2, "#FF6B6B", listOf(Triple("距离", "number", "km"), Triple("路线", "text", null), Triple("体感", "select", null))),
+    ModulePreset("喝水", 3, "#5AC8FA", listOf(Triple("杯数", "number", "杯"))),
+    ModulePreset("体重", 1, "#8E8E93", listOf(Triple("体重", "number", "kg"))),
+    ModulePreset("阅读", 6, "#AF52DE", listOf(Triple("页数", "number", "页"), Triple("状态", "select", null))),
+    ModulePreset("日记", 15, "#4F6EF7", listOf(Triple("标题", "text", null), Triple("心情", "select", null))),
+    ModulePreset("睡眠", 4, "#2E9E5B", listOf(Triple("时长", "number", "小时"), Triple("入睡", "time", null))),
+)
+
+/** 预设色盘（与桌面端 ColorPresets 一致） */
+private val moduleColorPresets = listOf(
+    "#4F6EF7", "#2E9E5B", "#7C5CE0", "#E05C8A", "#E0883C", "#2BA8A8",
+    "#FF6B6B", "#5AC8FA", "#AF52DE", "#E0A93C", "#8E8E93", "#1C1C1E",
+)
+private fun colorSafe(hex: String): Color = parseHexColor(hex, Color(0xFF4F6EF7))
+private fun autoKey(label: String): String = "f_${label.hashCode().toString().take(6)}"
 
 @Composable
 fun ModuleEditDialog(initial: CustomModule?, onClose: () -> Unit) {
@@ -200,54 +338,207 @@ fun ModuleEditDialog(initial: CustomModule?, onClose: () -> Unit) {
     }
     fun updateField(i: Int, f: CustomModuleField) { fields = fields.toMutableList().also { it[i] = f } }
     fun removeField(i: Int) { fields = fields.toMutableList().also { it.removeAt(i) } }
+    fun moveField(i: Int, delta: Int) {
+        val target = i + delta
+        if (target < 0 || target >= fields.size) return
+        val list = fields.toMutableList()
+        val f = list.removeAt(i)
+        list.add(target, f)
+        fields = list
+    }
     fun addField() {
         fields = fields + CustomModuleField(key = "f${System.currentTimeMillis() % 100000}", label = "", type = "number")
     }
     var pickingColor by remember { mutableStateOf(false) }
+    val accent = colorSafe(colorHex)
 
     FormDialog(title = if (initial == null) "新建模块" else "编辑模块", onClose = onClose) {
+        // —— 实时预览：飞书卡片头部，随名称 / 图标 / 颜色即时变化 ——
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.75f))
+        ) {
+            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(40.dp).background(accent.copy(alpha = 0.14f), RoundedCornerShape(11.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        ModuleIconList.getOrElse(iconIdx) { Icons.Filled.Extension },
+                        null, tint = accent, modifier = Modifier.size(21.dp)
+                    )
+                }
+                Spacer(Modifier.width(11.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (name.isBlank()) "模块名称" else name,
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                    Text("记录会显示在这里", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.width(8.dp))
+                Surface(shape = RoundedCornerShape(8.dp), color = accent.copy(alpha = 0.12f), contentColor = accent) {
+                    Text("0 条", Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+
         LabeledField("模块名称", name, { name = it }, placeholder = "如：跑步 / 日记")
-        Spacer(Modifier.height(8.dp))
-        // 图标
-        Text("图标", style = MaterialTheme.typography.titleSmall)
-        ModuleIconList.chunked(8).forEach { rowIcons ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                rowIcons.forEach { icon ->
-                    val idx = ModuleIconList.indexOf(icon)
-                    Box(
-                        Modifier
-                            .size(34.dp)
-                            .background(
-                                if (idx == iconIdx) colorSafe(colorHex).copy(alpha = 0.2f) else Color.Transparent,
-                                MaterialTheme.shapes.extraSmall
-                            )
-                            .clickable { iconIdx = idx },
-                        contentAlignment = Alignment.Center
+        Spacer(Modifier.height(10.dp))
+
+        // —— 快速模板：一键套用图标 / 颜色 / 字段 ——
+        Text("快速模板", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            modulePresets.forEach { p ->
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                ) {
+                    Row(
+                        Modifier.clickable {
+                            val presetFields = p.fields.mapIndexed { idx, f ->
+                                CustomModuleField(key = "f${idx + 1}", label = f.first, type = f.second, unit = f.third)
+                            }
+                            name = p.name; iconIdx = p.icon; colorHex = p.color
+                            fields = if (presetFields.isEmpty())
+                                listOf(CustomModuleField(key = "value", label = "数值", type = "number", unit = ""))
+                            else presetFields
+                        }.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(icon, null, tint = if (idx == iconIdx) colorSafe(colorHex) else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(19.dp))
+                        Icon(
+                            ModuleIconList.getOrElse(p.icon) { Icons.Filled.Extension }, null,
+                            tint = parseHexColor(p.color, MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(p.name, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
         }
-        Spacer(Modifier.height(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(30.dp).background(colorSafe(colorHex), CircleShape)
-                    .clickable { pickingColor = true }
-            )
-            Spacer(Modifier.width(8.dp))
-            Text("点击色块自定义颜色", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(10.dp))
+
+        // —— 图标：选中态 = 主题色描边 + 淡底 + 右上角 ✓ ——
+        Text("图标（点选后带 ✓ 选中标记）", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(5.dp))
+        ModuleIconList.chunked(8).forEach { rowIcons ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                rowIcons.forEach { icon ->
+                    val idx = ModuleIconList.indexOf(icon)
+                    val selected = idx == iconIdx
+                    Box(
+                        Modifier
+                            .size(38.dp)
+                            .background(
+                                if (selected) accent.copy(alpha = 0.16f) else Color.Transparent,
+                                RoundedCornerShape(11.dp)
+                            )
+                            .border(
+                                if (selected) 2.dp else 1.dp,
+                                if (selected) accent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                                RoundedCornerShape(11.dp)
+                            )
+                            .clickable { iconIdx = idx },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            icon, null,
+                            tint = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        if (selected) {
+                            Box(
+                                Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(14.dp)
+                                    .background(accent, CircleShape)
+                                    .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "✓", color = Color.White,
+                                    fontSize = 8.sp, fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
         Spacer(Modifier.height(10.dp))
-        Text("字段定义", style = MaterialTheme.typography.titleSmall)
+
+        // —— 颜色：预设色球（选中带环）+ 自定义 ——
+        Text("颜色", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(5.dp))
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            moduleColorPresets.forEach { hex ->
+                val selected = hex.equals(colorHex, ignoreCase = true)
+                Box(
+                    Modifier
+                        .size(if (selected) 27.dp else 24.dp)
+                        .background(parseHexColor(hex, accent), CircleShape)
+                        .border(
+                            if (selected) 2.dp else 1.dp,
+                            if (selected) MaterialTheme.colorScheme.onSurface
+                            else MaterialTheme.colorScheme.outlineVariant,
+                            CircleShape
+                        )
+                        .clickable { colorHex = hex }
+                )
+            }
+            Box(
+                Modifier
+                    .size(24.dp).background(accent, CircleShape)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                    .clickable { pickingColor = true },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("…", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        // —— 字段定义：可排序，↑↓ 调整记录时的填写顺序 ——
+        Text("字段定义（↑↓ 调整记录时的填写顺序）", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
         fields.forEachIndexed { i, f ->
             Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("字段 ${i + 1}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                    if (fields.size > 1) {
-                        IconButton(onClick = { removeField(i) }, modifier = Modifier.size(30.dp)) {
-                            Icon(Icons.Outlined.Delete, "移除字段", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
-                        }
+                    Text(
+                        "字段 ${i + 1}", style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { moveField(i, -1) }, enabled = i > 0, modifier = Modifier.size(30.dp)) {
+                        Icon(
+                            Icons.Filled.Remove, "上移",
+                            tint = if (i > 0) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outlineVariant,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                    IconButton(onClick = { moveField(i, 1) }, enabled = i < fields.size - 1, modifier = Modifier.size(30.dp)) {
+                        Icon(
+                            Icons.Filled.Add, "下移",
+                            tint = if (i < fields.size - 1) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outlineVariant,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                    IconButton(onClick = { if (fields.size > 1) removeField(i) }, modifier = Modifier.size(30.dp)) {
+                        Icon(Icons.Outlined.Delete, "移除字段", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
                     }
                 }
                 LabeledField("字段名", f.label, { updateField(i, f.copy(label = it, key = if (f.key.isBlank()) autoKey(it) else f.key)) })
@@ -296,10 +587,6 @@ fun ModuleEditDialog(initial: CustomModule?, onClose: () -> Unit) {
         )
     }
 }
-
-private fun colorSafe(hex: String): Color = parseHexColor(hex, Color(0xFF4F6EF7))
-private fun autoKey(label: String): String = "f_${label.hashCode().toString().take(6)}"
-
 // ============ 记一笔 ============
 
 @Composable
@@ -343,7 +630,7 @@ fun ModuleRecordDialog(m: CustomModule, onClose: () -> Unit) {
                     }
                 }
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(2.dp))
         }
         LabeledField("备注（可选）", values.value["__note"] ?: "", { s -> values.value = values.value + ("__note" to s) })
         Spacer(Modifier.height(12.dp))
@@ -375,7 +662,9 @@ fun ModuleRecordDialog(m: CustomModule, onClose: () -> Unit) {
 @Composable
 fun ModuleHistoryDialog(m: CustomModule, onClose: () -> Unit, onEditRecord: (CustomModule, CustomModuleRecord) -> Unit) {
     val mod = rememberData { Repos.customModules().firstOrNull { it.id == m.id } } ?: m
-    val records = mod.records.sortedBy { it.date }
+    val records = mod.records.sortedWith(
+        compareBy<CustomModuleRecord> { it.date }.thenBy { it.time }.thenBy { it.id }
+    )
     val numberField = mod.fields.firstOrNull { it.type == "number" }
 
     FormDialog(title = "${mod.name} · 历史", onClose = onClose) {

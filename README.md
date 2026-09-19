@@ -1,10 +1,10 @@
 <div align="center">
 
-# ME for Android — 个人管理系统（移动端）
+# ME for Android — Personal Management System (Mobile)
 
-**简体中文** | [English](README_EN.md)
+[简体中文](README_CN.md) | **English**
 
-**ME** 的 Android 版本 —— 个人管理系统（目标 · 任务 · 时间 · 健康），纯本地存储，与 Windows 桌面版（WPF）数据格式完全兼容，支持云同步互通。
+The Android version of **ME** — a personal management system (goals · tasks · time · health). All data is stored locally on your device and is fully compatible with the Windows desktop app ([ME](https://github.com/nailao946/ME)), with cloud sync between the two.
 
 [![Release](https://img.shields.io/github/v/release/nailao946/ME-PE)](https://github.com/nailao946/ME-PE/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/nailao946/ME-PE/total)](https://github.com/nailao946/ME-PE/releases/latest)
@@ -13,418 +13,147 @@
 ![License](https://img.shields.io/badge/License-MIT-green)
 [![Stars](https://img.shields.io/github/stars/nailao946/ME-PE?style=social)](https://github.com/nailao946/ME-PE/stargazers)
 
-**⬇️ [下载最新 APK](https://github.com/nailao946/ME-PE/releases/latest)** · 💻 [Windows 桌面版](https://github.com/nailao946/ME)
+**⬇️ [Download the latest APK](https://github.com/nailao946/ME-PE/releases/latest)** · 💻 [Windows desktop version](https://github.com/nailao946/ME)
 
 </div>
 
+> **Note:** the app's UI is currently Chinese-only. The project is fully usable if you can read basic Chinese; issues and PRs in English are always welcome.
+
 ---
 
-## 功能（与桌面版对齐）
+## Features (aligned with the desktop version)
 
-| 模块 | 功能 |
-|------|------|
-| 📋 任务 | 一次性/周期/量化任务、日期条筛选、标签过滤、打卡（每日多次）、**▲▼ 同级手动排序**、子任务 |
-| 🎯 目标 | 短期/长期/灵感分类、标签系统、颜色、父子层级、量化目标、进度自动计算 |
-| 📅 日历 | 月视图完成率色块、当日任务详情、月度打卡率/待完成/连续全勤统计 |
-| ⏱️ 时间 | 标签一键计时、今日时间线、本周/月用时分布环图、标签管理 |
-| 💚 健康 | 睡眠 / 体重BMI / 喝水容器 / 心情 / 尿酸(男女正常范围) / 锻炼项目 / 久坐计数 / 用药记录 |
-| 📊 对比 | 两参数叠加趋势 + AI 分析相关性（OpenAI 兼容接口） |
-| 🗺️ 地图 | 目标树形总览、进度环、整体进度 |
-| 📝 盘点 | 周/月完成率趋势、目标进度、盘点笔记 |
-| ⚙️ 设置 | 浅色/深色/跟随系统、6 种强调色、喝水/活动目标、**备份导出导入**、AI 供应商 |
+| Module | Features |
+|--------|----------|
+| 📋 Tasks | One-time / recurring / quantitative tasks, date bar filtering, tag filters, check-ins (multiple per day), **▲▼ manual sorting**, subtasks |
+| 🎯 Goals | Short-term / long-term / idea categories, tag system, colors, parent-child hierarchy, quantitative goals, automatic progress |
+| 📅 Calendar | Monthly completion-rate heat blocks, day details, monthly check-in rate / pending / perfect-streak stats |
+| ⏱️ Time | One-tap tag timers, today timeline, weekly / monthly distribution rings, tag management |
+| 💚 Health | Sleep / weight-BMI / water containers / mood / uric acid (normal ranges by sex) / exercise items / sedentary counter / medication records |
+| 📊 Compare | Two-parameter overlay trends + AI correlation analysis (OpenAI-compatible API) |
+| 🗺️ Map | Goal tree overview, progress rings, overall progress |
+| 📝 Review | Weekly / monthly completion-rate trends, goal progress, review notes |
+| ⚙️ Settings | Light / dark / follow-system theme, 6 accent colors, water & activity goals, **backup export/import**, AI providers |
 
-## 数据与桌面版互通
+Also included: **cloud sync** (GitHub / Gitee / WebDAV, device-flow account login, token stored locally), **Pomodoro timer** with status-bar notification timing, **custom modules** (any record type with trend charts), **medication reminders** via AlarmManager, **check-in heatmaps** per task.
 
-- 存储格式：`files/JsonData/*.json`，字段名/枚举值/时间格式与桌面端 `%LocalAppData%\ME\JsonData` 完全一致。
-- 桌面端备份是目录（`me_backup_*.db` 目录内含 `*.json`）→ 把目录 zip 后在手机「设置 → 导入备份」即可导入。
-- 手机端「导出备份」生成 `me_backup_时间.zip` → 解压覆盖桌面端 `JsonData` 目录即可同步回电脑。
+---
 
-## 构建
+## Data compatibility with the desktop version
 
-需要 JDK 17 与 Android SDK 34：
+- Storage format: `files/JsonData/*.json` — field names / enum values / time formats are identical to the desktop app's `%LocalAppData%\ME\JsonData`.
+- Desktop backups are directories (`me_backup_*.db` containing `*.json`) → zip the directory and import it on the phone via "Settings → Import backup".
+- The phone's "Export backup" produces `me_backup_<timestamp>.zip` → unzip it over the desktop `JsonData` folder to sync back to the PC.
+- Or simply use the built-in cloud sync (GitHub / Gitee / WebDAV) on both ends — no manual file shuffling needed.
+
+---
+
+## Build
+
+Requires JDK 17 and Android SDK 34:
 
 ```bash
-./gradlew assembleDebug     # 输出 app/build/outputs/apk/debug/app-debug.apk
-./gradlew installDebug      # 连接设备后直接安装
+./gradlew assembleDebug     # output: app/build/outputs/apk/debug/app-debug.apk
+./gradlew installDebug      # install directly on a connected device
 ```
 
-- 最低支持 Android 8.0（API 26），目标 Android 14（API 34）。
-- 技术栈：Kotlin + Jetpack Compose (Material 3) + kotlinx.serialization + OkHttp，无第三方数据库。
-- 用药提醒通过 AlarmManager 每日循环通知，开机自启重排（`BootReceiver`）。
+- Minimum Android 8.0 (API 26), target Android 14 (API 34).
+- Stack: Kotlin + Jetpack Compose (Material 3) + kotlinx.serialization + OkHttp; no third-party database.
+- Medication reminders use AlarmManager with daily repeating notifications and boot-time rescheduling (`BootReceiver`).
 
-## 技术说明
+---
 
-- JSON 序列化使用 `@SerialName("PascalCase")` 与 C# 属性名对齐；枚举以数字存储（如 GoalColor: 红=0 … 黄=5）。
-- `LocalDateTime` 序列化为 `yyyy-MM-ddTHH:mm:ss`（无时区），兼容 C# `System.Text.Json` 默认格式与 TimeSpan 的 `c` 格式。
-- `DataBus.rev` 全局版本号：任何仓库写入后 +1，Compose 通过它触发重组刷新。
+## Technical notes
 
-## 目录结构
+- JSON serialization uses `@SerialName("PascalCase")` to align with C# property names; enums are stored as numbers (e.g. GoalColor: red=0 … yellow=5).
+- `LocalDateTime` is serialized as `yyyy-MM-ddTHH:mm:ss` (no timezone), compatible with C# `System.Text.Json` defaults and TimeSpan's `c` format.
+- `DataBus.rev` is a global revision counter: every repository write increments it and Compose recomposes on change.
+
+---
+
+## Project structure
 
 ```
 app/src/main/java/com/joe/mepe/
-├── MEApp.kt / MainActivity.kt      # 应用入口、通知渠道
+├── MEApp.kt / MainActivity.kt      # app entry, notification channels
 ├── data/
-│   ├── Models.kt                   # 全部数据模型（与桌面端字段一致）
-│   ├── Serializers.kt              # DateTime/TimeSpan 兼容序列化器
-│   ├── JsonStore.kt / Repos.kt     # JSON 存储 + 仓库层
-│   ├── TaskLogic.kt                # 任务出现/完成/进度规则
-│   └── BackupManager.kt            # zip 备份导出导入
-├── notify/                         # 用药提醒闹钟 + 开机重排
-├── ai/LlmService.kt                # OpenAI 兼容 chat 调用
+│   ├── Models.kt                   # all data models (identical fields to desktop)
+│   ├── Serializers.kt              # DateTime/TimeSpan-compatible serializers
+│   ├── JsonStore.kt / Repos.kt     # JSON storage + repository layer
+│   ├── TaskLogic.kt                # task occurrence / completion / progress rules
+│   └── BackupManager.kt            # zip backup export & import
+├── notify/                         # medication reminder alarms + boot rescheduling
+├── ai/LlmService.kt                # OpenAI-compatible chat client
 └── ui/
-    ├── theme/ Charts / Components  # 主题、Canvas 图表（折线/柱状/环形/进度环）、通用组件
-    ├── AppNav.kt                   # 底部 5 Tab + 顶部地图/盘点/设置入口
+    ├── theme/ Charts / Components  # theme, Canvas charts (line / bar / ring / progress), shared components
+    ├── AppNav.kt                   # bottom 5 tabs + top map / review / settings entries
     ├── tasks/ goals/ calendar/ timetrack/
-    ├── health/                     # 8 个健康子页签 + 对比 + AI 分析
+    ├── health/                     # 8 health sub-tabs + compare + AI analysis
     └── map/ review/ settings/
 ```
 
-
-## v2.0.0 更新
-
-- **UI 全面翻新**：Material 3 完整配色（夜间模式修复）、全部页面换用单色矢量图标（Material Icons）、页面切换动画、卡片描边阴影、对称布局
-- **图标颜色可设置**：设置 → 图标颜色（跟随强调色或自定义色）
-- **强调色可自定义**：预设 6 色 + 任意 #RRGGBB
-- **任务长按拖动排序**：主任务/子任务均可长按拖动，实时保存排序
-- **目标完整功能**：编辑/删除/归档/子目标/标签管理/日期/量化，颜色支持自定义
-- **时间页重做**：标签计时（实时走秒）、番茄钟（专注/短休/长休，参数与 PC 互通）、今日记录删除、分布环图、近 7 日柱状图，整页可滚动
-- **健康页重做**：图标化页签、总览指标卡片 + 快速记录入口、喝水目标环、锻炼进度环、用药提醒开关
-- **GitHub 免费云同步**：设置 → 云同步，填私有仓库 + Token 即可 PC ↔ 安卓同步（Token 存本机，不随数据上传）
-- **自定义模块**：创建任意记录块（数值/文本/时间/是否/单选），趋势图 + 历史，与 PC 互通，设置内有教程
-- 每页左上角返回键
-
-
-
-## v2.1.0 更新
-
-- **GitHub 账号授权登录**：设置 → 云同步 →「账号授权登录」，自动打开网页登录输代码点 Authorize 即可拿 Token（GitHub Device Flow），无需手动创建 PAT；仍保留手动填 Token
-- 与 PC 端 v2.1.0 数据互通（自定义模块、目标颜色、番茄钟参数、云同步仓库布局一致）
-
-
-## v2.2.0 更新
-
-- **GitHub 一键云同步**：账号授权登录后自动创建私有仓库 ME-OKR 并完成配置，登录完即可直接上传/下载，无需手填仓库名
-- **喝水页重做**：大环居中（显示还差多少 ml）、+100/+250/+500 对称快捷按钮、容器快速记录、今日记录列表（带删除）、14 天柱状图
-- **时间页重排**：标签计时移到番茄钟上方；开始计时后**状态栏通知实时显示计时**（自动走秒），通知带「停止计时」按钮可直接控制，点通知回到应用
-- **目标子目标任务化**：子目标变成任务行——左侧勾选圈直接标记完成，点击行弹出量化窗口（数值加减/滑杆，普通目标调进度百分比）
-- **任务/目标左滑操作**：卡片左滑露出 ✎ 编辑（蓝）与 🗑 删除（红）图标按钮；完成只能通过左侧勾选圈；**点任务卡从底部升起详情窗**——完成打卡、量化进度（滑杆/±1/+5）、循环次数 +1、子任务勾选与添加、编辑删除入口
-- **页面转场优化**：右上角地图/盘点/设置进出时底部栏平滑收起/展开、返回走下滑动画，不再大幅跳动；头部图标按钮尺寸统一
-
-
-## v2.2.1 更新
-
-- 登录状态持久保留：账号授权一次即可，之后打开应用始终显示已登录，无需重复登录
-- 修复自动建仓失败（HTTP 403，鉴权头缺失）
-- 仓库名只填 ME-OKR 即可，自动挂到你的账号下；默认值与输入框均为 ME-OKR
-
 ---
 
-## v2.3.0 更新（与桌面端 v2.3.0 对齐）
+## Recent Updates
 
-- **盘点页新增「时间统计」**：总计时长 / 各标签时长占比条 / 近 14 天每日趋势，周期可切（今日/本周/本月/全部），参考桌面端各类统计
-- **左滑交互修复**：编辑/删除按钮随卡片圆角裁剪（右侧不再突出直角）；动作按钮随滑动进度淡入（关闭时完全隐藏）；已完成的任务卡片改为不透明，不再透出底下的按钮；**拖动排序时自动锁定左滑**，不会再看到下层按钮
-- **颜色全面改圆形颜料盘**：目标/标签/强调色/图标颜色统一为点圆形色块选择（24 色精选，去掉颜色代码输入）；新建目标弹窗的「自定义颜色」改为颜料盘图标圆球（窄屏放不下文字）
-- **进度条**：目标行、子目标行、量化任务卡均有进度条（量化按数值、普通按百分比）
-- **任务详情弹窗新增「打卡统计」**：近 30 天完成次数 / 打卡率 / 连续打卡天数
-- **任务可关联时间标签**：新建/编辑任务时可选所属目标与关联时间标签（与桌面端一致）；新建任务正确写入创建时间
-- **喝水容器管理补齐**：完整容器列表（记一笔 / 编辑 / 删除 / 新增），与桌面端 water_containers.json 互通
-- **设置页微信式分类**：主页一行一个大类（外观 / 健康目标 / 云同步 / 备份与恢复 / AI 分析 / 自定义模块 / 关于），点进去才是具体设置
-- **云同步防覆盖**：上传时若发现云端文件比本地新（其他设备改过），自动跳过并提示先下载
-- 心情五档与桌面端统一（桌面端旧四档记录显示时自动换算）
+### v2.4.45
 
----
+- Quantitative tasks and goals at 100% now remain completed on every date.
 
-## v2.4.0 更新（细节打磨，全部来自实际使用反馈）
+### v2.4.44
 
-- **打卡率逻辑修复**：一次性/量化任务不再出现"近30天完成30次、打卡率3000%"——打卡统计只对习惯型任务（周期/循环）显示，且严格按"应打卡日"计算，永不超过 100%
-- **左滑动作区内圆角**：编辑/删除区域左侧做成凹角（内圆角），滑开后与任务卡片的圆角无缝衔接，看起来是一张连续的卡片
-- **修复长按拖动失效**：拖动排序时不再因界面状态切换打断手势，长按即可正常拖动
-- **拖动落点淡蓝虚影**：任务/目标长按拖动时，预计落入的行会显示淡蓝色虚影框
-- **目标支持长按拖动排序**（同时间框架内），顺序持久保存
-- **量化任务交互对齐 PC**：左侧打卡圈 = 进度+每日步长（不再是"完成/取消"）；详情页去掉 +5/完成 按钮，改为输入任意数值加减（更新模式=设为该值），保留滑杆
-- **任务条显示时间标签**：卡片左侧标签色条 + 边框随标签色 + 元信息显示 ⏱ 标签名
-- **目标可绑定时间标签**：编辑目标时选择，该目标下的任务默认继承（模型新增 TimeTagId，与桌面端互通）
-- **时间页标签改按钮组**：彩色胶囊按钮流式排列（点=开始/停止，运行中实底高亮，显示今日时长）；"＋新标签"升级为「标签管理」弹窗（增删改）
-- **全色 HSV 调色盘**：所有颜色选择升级为 色相条 + 饱和度/明度面板，可取任意颜色（预设色块仍保留）
-- **日期条更紧凑** + 新增「今天」按钮一键跳回今日
+- Added bilingual UI preferences and synchronized goal completion history with today/past-completed sections.
 
----
+### v2.4.41
 
-## v2.4.1 更新
+- **Fixed misaligned taps on the Health page**: mid-animation page positions were synced back to the tab bar, which interrupted the pending scroll — tapping "Weight" landed on "Sleep", "Water" landed on "Body", "Mood" landed on "Water" (top tabs affected too). Page position is now synced only after the pager settles
+- **Pinned health overview**: the overview is no longer a tab — it now stays pinned above the tab bar (collapsible by tapping its title), so today's summary is visible on every sub-page and metric/quick-record tiles jump straight to the right tab; everything else scrolls as usual
+- **Sort & collapse for record lists**: all record lists (water today, uric acid history, time-tracking daily records, etc.) gained a sort icon (oldest-first / newest-first, icon only) and a collapse chevron in the title row, with expand/collapse animations
+- **"Today" page in Review**: period selector is now Today / Week / Month; the Today page shows today's completion rate, done tasks, remaining tasks and a 7-day rate chart, with time stats focused on today; writing reviews & history stay on Week/Month
+- **Review time stats as line charts that follow the period**: the 14-day daily and 12-month monthly duration charts are now line charts; tapping the Today / This week / This month / All labels switches the chart to that range
+- **Equal stat-card heights**: cards without a "vs previous period" line now reserve the same row, so all cards in a row share the same height
+- **Calendar day detail follows task order**: the day's task list now sorts like the Tasks page (priority descending, then manual order), plus a daily progress row (done / total for that day, same counting as Review)
+- **Multi-cloud sync (redundant backups)**: any of GitHub / Gitee / WebDAV with credentials filled is enabled; uploads are pushed to ALL enabled clouds at once — one failing doesn't affect the others and is caught up on the next upload; downloads prefer the cloud with the most recent successful upload and fall back to the next one on failure; branches are remembered per cloud (GitHub=main, Gitee=master), old configs migrate automatically
 
-- **进度条全面升级**：新增统一组件 `RoundedProgressBar`（ui 组件库）——条体加粗（8-12dp）、药丸全圆角、进度变化带 300ms 平滑动画；已替换全部手绘进度条：任务卡/任务详情/子目标行/目标量化、盘点页时间占比条、心情 30 天分布图；颜色自动跟随标签色或主题强调色
+### v2.4.40
 
----
+- **Fixed WebDAV (Jianguoyun) uploads failing with HTTP 409**: Jianguoyun and other WebDAV services never create parent folders implicitly — uploading into a missing folder always returns 409 (AncestorsNotFound). The old code mistook the folder-creation request's 409 for "folder already exists, go ahead", so nothing was created and every file failed. The app now creates the sync folder level by level before uploading, and a 409 during upload triggers an automatic folder re-creation plus one retry; the server address defaults to Jianguoyun (https://dav.jianguoyun.com/dav/) and is pre-filled when switching to WebDAV (desktop version fixed in sync)
 
-## v2.4.2 更新
+### v2.4.47
 
-- **左滑按钮重做**：编辑/删除从两块小色条升级为 48dp 圆形大按钮（图标 22dp），底面延续卡片颜色、凹角衔接不变，整块半区可点击；滑动区加宽到 132dp，任务条与目标条共用（组件库统一改动）
+- **Calendar screen performance**: the whole month's status is now precomputed once per month instead of recomputing per cell on every frame, which removed the lag when opening the calendar; day cells also get an iOS-like ripple on press
+- **Home screen widget**: new "今日任务" AppWidget (standard Android widget protocol, works on stock Android / Xiaomi HyperOS / ColorOS / OriginOS) showing today's tasks and completion count, refreshed automatically when data changes
+- **Custom modules on the surface**: a modules shortcut was added to the quick links of every main screen; the module editor no longer overlaps the icon with the record badge, and "recent records" is now strictly the latest by date, time and id
+- Removed the redundant "custom modules" entry from settings (the module page is the single entry point)
 
----
+### v2.4.46
 
-## v2.4.3 更新
+- **Task completion history**: one-off tasks and quantitative tasks that reach 100% now appear under "Done today" only on the day they were completed, then move to the "Completed earlier" group showing the actual completion date; the new "Today's goals" card on the tasks screen follows the same rule and no longer lists historically completed items
+- **Calendar view**: removed the check-in rate — the first stat chip now reads "Today's tasks: Done / Not done", and month cells are coloured by done / partially done instead of a rate gradient; the check-in streak counts a day as checked in as soon as any single task is completed that day
+- **Cloud sync fixed and hardened**: Gitee and WebDAV uploads no longer fail — Gitee now recovers a missing response sha, falls back between main/master when the branch doesn't exist and no longer hides auth errors; the "latest version" check uses content hashes plus per-cloud baselines instead of file timestamps, so downloading never overwrites local data that hasn't been uploaded yet; upload/download now report per cloud which platforms succeeded and which failed with the reason
+- **Cloud sync diagnostics and conflict resolution**: new "诊断连接" tests connect → list → read on every cloud with per-step timings; files changed on both sides can now be resolved one by one (keep local or take cloud) from the sync page
+- **Custom modules editor enriched**: icon picker with a visible selected state, quick-start templates, a colour swatch palette, field reordering and a live card preview; quantitative task cards now show "still needs +N today" for the daily target
 
-- **时间标签按钮去图标**：只保留标签文字，点击开始时弹跳动画 + 计时中轻微呼吸动画（颜色填充/文字变色仍随标签色平滑过渡）
+### v2.4.45
 
----
+- **Glass theme**: new "毛玻璃" (frosted-glass) option in Appearance — gradient backdrop with translucent frosted cards, dark/light follows the system
+- **Custom modules redesigned**: module cards now follow a Feishu-style layout — large-radius cards with a hairline border, tinted rounded icon block, title plus meta line and a record-count badge, a latest-record summary, a hairline divider and an icon+text action row
 
-## v2.4.4 更新
+### v2.4.39
 
-- **任务页日期条改圆形**：每天一颗圆球（星期+日期居中，有任务的日期底部小圆点标记），选中日实底高亮，右侧仍有一键「今天」
+- **Fixed Gitee upload failing with "sha is missing" (0/15 files)**: Gitee's API differs from GitHub's — creating a file requires POST, while PUT is strictly an update endpoint that must carry the file's sha (rejected with HTTP 400 otherwise, even when the file doesn't exist). New files previously went through a sha-less PUT, so every first-time upload failed. File creation now uses POST, with an automatic fallback to a sha-carrying update when the file already exists; fixed together with the desktop version
 
----
+### v2.4.38
 
-## v2.4.5 更新
+- **Review-screen statistics now match the desktop**: "Completed tasks" became **completed / total due**. Total due counts only tasks actually due that day — subtasks, quantitative tasks without a daily target, and recurring tasks not scheduled today (e.g. a Sat/Sun task on Monday) are excluded; completion rate = completed ÷ total due. Quantitative tasks with a daily target count as completed on days with a check-in record; a finished quantitative task counts only up to the day it reached its target
+- **"vs previous period" on the Review screen**: completion rate, completed tasks and time invested (total duration) all show green-up / red-down deltas — weekly review compares last week, monthly compares last month; time statistics on "Today" compare yesterday
+- **Time statistics "All" is now a 12-month monthly bar chart** — month-over-month trends at a glance instead of only the last 14 days
+- **Check-in heatmap fixed**: recurring tasks previously never lit up due to a date-logic issue; they now light up based on that day's check-in records, consistent with the list view
 
-- **颜色全面跟随时间标签**：
-  - 任务卡：名称下的小字、完成圈（未完成描边/已完成实底）、进度条、边框、左侧色条全部随标签色
-  - 任务详情弹窗的大完成圈同样随标签色
-  - 目标卡：绑定了时间标签的目标，进度环、名称圆点、小字、进度条、子目标行的勾选圈/小字/进度条全部随标签色（未绑定则沿用目标自身颜色）
-
----
-
-## v2.4.6 更新
-
-- **左滑按钮二次重做（设计系统「色调按钮」风格）**：大圆角方块（最大 64dp）内 图标 + 文字标签（"编辑"/"删除"），柔和语义色底（主题主色/错误色 14% 透明度 + 同色文字图标），不再是大红大蓝色块；滑出时两枚按钮带错落滑入动效（编辑 26dp、删除 14dp 位移差）；滑动区加宽至 144dp，高度自适应行高，任务/目标/子任务统一生效
-
----
-
-## v2.4.7 更新
-
-- **时间标签动画更换**：去掉缩放/弹跳（文字会动），改为仅按钮底色明暗呼吸（75%~100% 缓慢渐变），文字、形状完全静止；点击开始仍是平滑颜色填充过渡
-
----
-
-## v2.4.8 更新
-
-- **时间统计弹窗**：时间页右上角新增 📊 入口，点击后从底部浮出统计窗——周期切换（今日/本周/本月/全部）、总时长/记录数/日均统计卡、扇形分布图、各标签时长占比条、**当日 24 小时甘特时间轴**（每标签一行、色块为计时区间、每 3 小时网格线）、近 14 天每日时长柱状图（对齐 PC 端时间统计）
-- **番茄钟卡片缩小**：进度环 150→118dp、按钮收窄，页面更紧凑，把空间留给标签和记录
-
----
-
-## v2.4.9 更新
-
-- **日期条自动居中今天**：进入任务页时今天那颗圆球定位在横滑条正中间；点「今天」按钮平滑滚动回到居中位置
-
----
-
-## v2.4.10 更新
-
-- **新建按钮改为小圆 FAB**：任务页/目标页右下角改为纯 "+" 号的 56dp 圆形悬浮按钮（Material 3 规范），带按压抬升动效，不再占一行文字空间
-
----
-
-## v2.4.11 更新
-
-- **AI 分析支持 Anthropic**：设置 → AI 分析新增「API 格式」选择（OpenAI 兼容 / Anthropic）；Anthropic 走 `/v1/messages`（x-api-key + anthropic-version 头），可与桌面端互通的 ai_providers.json 共用（ApiFormat 0/1 约定一致）；供应商列表显示格式标签
-- **关于页新增 GitHub 链接**：安卓端（nailao946/ME-PE）与桌面端（nailao946/OKR）项目主页，点击直接跳转浏览器
-
----
-
-## v2.4.12 更新
-
-- **左滑按钮第三版重做（渐变浮现风格）**：编辑/删除不再是色块上的按钮，而是两块**渐变色板**——编辑侧从卡片颜色渐入主题色、删除侧渐入红色，与卡片之间没有任何接缝；每侧是一枚**磨砂圆钮**（半透明白圆底 + 白图标 + 小字标签），滑开时圆钮从下方 12dp 处上升淡入、删除侧略带迟滞，有"内容从色板里浮出来"的层次感；整块面板可点，任务/目标/子任务统一生效
-
----
-
-## v2.4.13 更新
-
-- **拖动排序落点修复**：旧实现对整组任务（含未显示的）重排且显示顺序混入优先级，导致松手后放不到松手位置；现在只按界面显示顺序重排显示中的任务、其余任务原位保留，显示顺序与落点完全一致；排序统一为纯 SortOrder；整组单次保存+单次刷新，拖动过程不再卡顿抽搐（子任务同步修复）
-
----
-
-## v2.4.14 更新
-
-- **番茄钟按钮图标化**：开始/暂停、跳过、重置改为三枚纯图标圆形按钮（主控按钮用相位色实底、跳过灰色调、重置红色调），纵向紧凑排列贴进度环右侧，卡片更瘦更利落
-
----
-
-## v2.4.15 更新
-
-- **修复番茄钟时间不走**：剩余时间依赖的当前时钟不是 Compose 状态，列表项不重组导致秒表冻结；现在每 500ms 驱动卡片重组，时间正常走字
-- **番茄钟绑定标签**：设置里可选「工作标签」和「休息标签」——开始专注自动在该标签计时，进入休息自动切到休息标签，暂停/重置结束记录；阶段切换（含自动开始/跳过）全程自动对齐；卡片上显示当前绑定（专注→xx · 休息→xx）
-
----
-
-## v2.4.16 更新
-
-- **任务详情统计全类型回归**：此前只有周期/循环任务显示打卡统计，一次性/量化任务什么都不显示（被误认为删掉了）；现在所有类型都有统计行——周期/循环：近30天完成 x/y 天 · 打卡率 · 连续打卡；量化：当前进度 · 完成度% · 剩余量；一次性：状态 · 完成于 · 截止
-
----
-
-## v2.4.17 更新
-
-- **「今天」按钮重做**：从突兀的文字按钮改为与日期圆球同尺寸同语言的圆形按钮——主题色淡底 + 描边 + 日历图标 + "今天"小字，视觉上融入圆球序列，点击仍会选中今天并平滑滚动居中
-
----
-
-## v2.4.18 更新
-
-- **左滑按钮第四版（完全融合）**：去掉文字标签，只留纯图标实色圆钮（编辑=主题色、删除=红色）；动作区底色与任务条容器色完全一致（已完成卡自动跟随灰色调），配合凹角圆角，左滑后两枚圆钮看起来就长在任务条上、浑然一体；**圆钮尺寸随行高自适应**（34~56dp）——子任务/子目标行更矮，圆钮自动变小，图标同步缩放；滑出时圆钮带弹出动效，删除侧略带迟滞
-
----
-
-## v2.4.19 更新
-
-- **拖动机制重构（彻底解决鬼畜跳动）**：拖动中不再实时换位+位移补偿（互相追赶导致上下乱跳），改为**拖动时只显示落点虚影、松手才一次性落位**（单次保存刷新），全程 60fps 跟手
-- **子任务可拖动**：子任务从嵌套在主任务项内改为独立列表项，拥有自己的拖动定位与落点虚影，可与同父任务的其他子任务排序（视觉不变，仍缩进显示）
-- 目标拖动同步改为"虚影+松手落位"机制
-
-## v2.4.20 更新
-
-- **应用名统一为 ME**：启动器名称、关于页全部改为「ME（个人管理系统）」，与桌面端一致
-- **关于页版本号自动读取**：不再硬编码（此前一直显示 v2.4.11），随构建版本自动更新
-- **桌面端仓库链接更新**：GitHub 源码仓库 OKR 已更名为 **ME**，关于页链接同步更新
-- **云同步数据仓库更名 ME-OKR → ME-Data**：旧配置自动迁移，无需手动修改；历史数据完整保留
-
-## v2.4.21 更新
-
-- **番茄钟卡片再次紧凑化**：去掉大圆环进度盘，改为时间文本 + 阶段名的紧凑布局，卡片高度大幅缩小
-- **控制按钮横向排列**：开始/暂停、跳过、重置三个圆钮改为横排（图标按钮），放在时间右侧
-- **进度反馈保留**：底部细进度条按阶段颜色显示当前进度，不再占空间
-
-## v2.4.22 更新
-
-- **时间统计口径与桌面端完全对齐**：修复扇形图/各标签/总时长与 PC 不一致的问题
-  - 排除默认标签「闲时」——此前的自动闲置记录（每天动辄十几个小时）会把扇形图占满，其他标签完全看不见
-  - 应用设置里「时间统计标签范围」（StatsIncludedTags）过滤，与 PC 端同一份设置，同步自动生效
-  - 运行中的计时记录按当前时刻计入时长（此前直接被忽略）
-- 同步生效范围：时间页今日总时长与分布图、时间统计弹窗（扇形图/各标签/甘特图/近14天趋势）、复盘页时间统计
-- 甘特时间轴保持显示全部标签（含闲时），与桌面端甘特图一致
-
-## v2.4.23 更新
-
-- **左滑按钮重新设计（任务条/子任务/目标条通用）**：只保留「编辑 / 删除」两个纯图标按钮
-  - 去掉动作区的背景面板和实色圆钮底色——不再粘着任务条，左滑后就是两个紧凑的着色小图标（编辑=主色、删除=红）
-  - 滑动距离从 144dp 收窄到 88dp，跟手省力，视觉更轻
-  - 保留滑过一半吸附打开、拖动排序时锁定左滑、点按钮自动弹回等交互
-
-## v2.4.24 更新
-
-- **关于页新增「提意见 / 反馈 Bug」入口**：写下建议或遇到的问题，一键提交为项目 GitHub 仓库（github.com/nailao946/ME-PE）的 Issue
-  - 复用「云同步」已绑定的 GitHub 账号（任何账号都能在公开仓库提 issue，无需仓库写权限）；未绑定时提示先去云同步登录
-  - 第一行自动作为 Issue 标题（过长截断），正文末尾自动附上版本号与系统信息，便于定位问题
-  - 提交成功弹出 Toast 显示 Issue 编号；网络失败在弹窗内提示，可修改后重试
-
-## v2.4.25 更新
-
-- **修复 GitHub 授权登录报「unable to resolve host "github.com"」无法登录的问题**
-  - 原因：部分网络的系统 DNS 解析不了 github.com（浏览器自带加密 DNS 所以能打开网页，App 用系统 DNS 就失败），且授权轮询遇到一次网络错误就整体停止，授权成功也收不到 Token
-  - 新增 DoH 备用解析：系统 DNS 查不到时自动改用加密 DNS（阿里 223.5.5.5）再查一次，云同步 / 反馈等所有 GitHub 请求同样受益
-  - 授权轮询不再因网络抖动中断：失败后自动重试（含切浏览器回 App 时的网络切换），连续失败约 4 分钟才提示检查网络；网络恢复后继续等待授权
-- **授权码自动复制**：点「账号授权登录」后 8 位授权码自动复制到剪贴板并弹 Toast 提示，到浏览器直接粘贴即可；等待授权期间新增「再次复制授权码」按钮
-- 域名解析失败的报错改为明确的中文提示（检查网络 / 换热点重试）
-
-## v2.4.26 更新
-
-- **修复下载数据报「Last unit does not have enough valid bits」（已下载 4/15 个）的问题**
-  - PC 端数据本身没问题：仓库里的文件都是标准 Base64，可以正常解码；是手机到 GitHub 的传输链路不稳，部分文件响应内容在传输中损坏，Base64 解码时才报错，且一个文件解码失败后后面的文件跟着失败
-  - 下载改为 raw 方式直接取文件原文（响应体即文件内容，完全不经 Base64 编解码），从根上避开这类解码失败；raw 请求失败时自动重试一次，仍失败再退回原 JSON+Base64 方式兜底
-  - 每个文件写入本地前先校验是有效 JSON，传输损坏的内容不会被写进本地数据；单个文件失败不再影响其它文件
-  - 下载部分失败时提示具体失败的文件名与原因（如「已下载 12/15 个，失败：goals.json（…）」），便于定位；下载前依旧先备份本机数据
-
-## v2.4.41 更新
-
-- **修复健康页点按错位的问题**：翻页动画中途的页码会被同步回标签，触发对中间页的滚动把目标页打断——表现为「点体重落在睡眠、点喝水落在身体、点心情落在喝水」，顶部标签同样受影响；现在只在翻页停稳后同步页码，点哪个到哪个
-- **健康总览常驻**：总览从页签改为常驻在页签上方（可折叠，点标题行收起/展开），任何子页都能随时看到今日概览、点指标或快速记录直达对应页签，其余内容在页签下正常滑动
-- **记录列表支持排序与折叠**：喝水的今日记录、尿酸的历史记录、时间页的当日记录等所有记录列表，标题行新增排序图标（从早到晚/从晚到早，仅图标无文字）与折叠箭头，展开收起带动画
-- **盘点新增「今日」页**：周期选择变为 今日 / 周盘点 / 月盘点，今日页展示当日完成率、完成任务、待完成任务与近7天完成率，时间统计默认聚焦今日；写盘点与历史盘点仍在周/月页
-- **盘点时间统计改折线图且跟随周期**：近14天每日时长与近12月每月时长改为折线图；点击「今日/本周/本月/全部」标签，下方折线图即展示对应时间段（今日附看近14天走势）
-- **统计卡高度统一**：带「较上期」的统计卡比不带的高，现在所有统计卡统一预留涨跌行，同一排高度一致
-- **日历任务详情按任务排序**：当日任务列表改为与任务页同序（优先级降序，再按手动排序），并在详情顶部新增当日完成进度（完成量/当日总任务量，与盘点同口径）
-- **多云同步（多云端互为备份）**：GitHub / Gitee / WebDAV 任一填好凭据即启用该云端；「上传」会同时推送到所有已启用的云端，某个失败不影响其他，下次上传自动补齐；「下载」优先取最近一次上传成功的云端，失败自动换下一个兜底；分支按云端分别记忆（GitHub=main、Gitee=master 互不干扰），旧配置自动迁移
-
-## v2.4.40 更新
-
-- **修复 WebDAV（坚果云）上传报 HTTP 409 的问题**：坚果云等 WebDAV 服务不会隐式创建父目录——目标文件夹不存在时上传一律 409（AncestorsNotFound），而旧版把建目录请求的 409 误当成「目录已存在、可以继续」，导致目录没建成、每个文件都上传失败。现在上传前会逐级创建同步目录，上传遇 409 也会自动重建目录并重试一次；服务器地址留空时默认就是坚果云，切换到 WebDAV 时自动填好 https://dav.jianguoyun.com/dav/，与桌面端同步修复
-
-## v2.4.39 更新
-
-- **修复 Gitee 上传报「sha is missing」导致 0/15 全部失败的问题**：Gitee 的接口与 GitHub 不同——新建文件必须用 POST，PUT 只用于更新且必须携带文件 sha（不带 sha 一律报 400，即使文件并不存在）。此前新建文件走了不带 sha 的 PUT，首次上传全部失败。现新建改走 POST，撞上已存在时自动取最新 sha 转更新，与桌面端同步修复
-
-## v2.4.38 更新
-
-- **盘点页统计口径与桌面端统一**：「完成任务」改为「完成数 / 总任务数」，总任务数只算当天该做的任务——子任务不计、未设每日目标的量化任务不计、非当日的循环任务（如周六周日的任务在周一）不计；完成率 = 完成任务 ÷ 总任务数。量化任务设了每日目标后，当天有打卡记录即算入完成；已达标结束的量化任务只算到达标当天为止
-- **盘点页新增「较上期」**：完成率、完成任务、时间投入（总计时长）三处都能看到与上期的涨跌（绿升红降）——周盘点比上周、月盘点比上个月；时间统计选「今日」时对比昨天
-- **时间统计点「全部」改为近 12 个月每月时长柱状图**，月与月对比一眼看趋势，不再只有近 14 天每日图
-- **修复打卡图**：周期任务此前因判定口径问题永远不会亮格，现改按当日打卡记录判定，与列表展示一致
-
-## v2.4.37 更新
-
-- **任务/子任务详情页新增「打卡图」**：点任务卡片打开详情弹窗即可看到近 15 周的打卡热力格——每天一小格，亮色（标签色）=当天已完成、灰色=当天该做未做、浅色=无安排，今天一格带描边；哪些天坚持了、哪些天漏了一目了然。打卡图下方保留原有的近 30 天打卡率 / 连续打卡统计
-- **子任务也能打开详情**：详情弹窗里的子任务行现在可以点进去，子任务同样有自己的打卡图与统计（返回键或点外部先关子任务详情，再关父任务详情）
-
-## v2.4.36 更新
-
-- **新增 Gitee 与 WebDAV（坚果云）两种云同步方式**：设置 → 云同步顶部可切换 GitHub / Gitee / WebDAV——Gitee 国内直连速度快（粘贴 gitee.com 私人令牌即可，自动建私有仓库），WebDAV 支持坚果云、Nextcloud、群晖等任意网盘（填账号 + 应用密码，坚果云在网页版「安全选项」添加应用密码）；三种方式的防覆盖保护、上传/下载行为完全一致，与 PC 端互通，随时切换不丢数据
-- **任务页下拉刷新去掉加载圈圈**：改为微博式下拉——列表顶部继续下拉会露出空白、松手弹回，不再显示转圈指示器；下拉超过阈值松手即静默触发一次云同步，过程看右上角状态球呼吸闪烁，结果用 Toast 轻提示
-- **AI 供应商删除立即生效并加二次确认**：修复点删除后列表不刷新、要退出页面重进才消失的问题（Compose 跳过重组导致）；点删除先弹「确定删除」防误触
-- **时间统计图表优化**：时间页「近 7 日计时」与统计弹窗「近 14 天每日时长」由柱状图改为折线图（自带 Y 轴刻度），每日时长接近时柱状图全是等高柱子看不出变化，折线图一眼看出趋势
-
-## v2.4.35 更新
-
-- **修复网页已授权、App 却一直停在「等待授权」的问题**：GitHub 要求轮询取令牌的间隔不得小于规定值（掐得太准、网络往返稍有抖动就会触发 slow_down 限流，间隔要求反而越变越宽）。现在每次轮询都比要求多留 2 秒余量，授权完成后能更快、更稳地拿到令牌
-- **授权完成更快**：拿到令牌后先立即保存（登录即刻生效），GitHub 用户名改为后台补拉——此前拉取用户名超时（最长 30 秒）会拖住「授权成功」的提示；拉到后自动刷新页面上的「已登录」显示
-
-## v2.4.34 更新
-
-- **任务页新增云同步状态球**：顶栏右侧小圆点实时反映同步状态——灰=未同步，绿色呼吸闪烁=同步中，绿=已同步，红=同步失败；点一下立即触发一次完整云同步（先上传后下载，云端较新的自动跳过防覆盖）
-- **任务列表下拉刷新同步**：在列表顶部继续下拉（类似微博下拉刷新）即可触发云同步，松手超过阈值出现转圈，同步完成自动收起；设置页上传/下载的结果同样会反映到状态球
-- **同步结果轻提示**：状态球/下拉触发的同步成功或失败都用 Toast 轻提示，不打断当前界面
-
-## v2.4.33 更新
-
-- **修复云同步 401 的提示与复发**：GitHub 返回 401（令牌被撤销或过期）时，上传/下载/反馈不再显示 GitHub 原始 JSON 报错，改为直接提示「GitHub 授权已失效，请重新授权登录一次即可恢复」
-- **GitHub 令牌自动续期**：GitHub App 开启「令牌过期」后用户令牌 8 小时就失效（与 PC 端同一原因）——现在授权时保存 refresh_token，令牌到期前 10 分钟自动换新，上传/下载/反馈请求前都会静默续期，不再需要每 8 小时重新授权。**注意：需在设置里重新授权登录一次，新版才会保存续期信息**
-
-## v2.4.32 更新
-
-- **关于页新增版本检测**：新增「检查更新」卡片，点一下对比 GitHub Releases 上发布的最新版本与当前版本——发现新版本时显示「发现新版本 vX.Y.Z（当前 vX.Y.Z），点此前往下载」，点击跳转浏览器打开发布页下载新 APK；已是最新 / 检查失败（未发布过版本、网络不通）都会明确提示
-- 检测匿名访问仓库 API，无需登录；版本号从发布的 tag、Release 标题、附件文件名（如 ME-PE-v2.4.32.apk）自动提取并取最大值，预发布 Release 也参与比较
-
-## v2.4.31 更新
-
-- **每周/每月改为滚轮计数器**：新建/编辑任务选「每周」后，周几一排小按钮换成滚轮选择器——上下滚动把「周一…周日」停到中间高亮行即选中（点任意一行也会滚到中间）；「每月」同理，1～31 号滚轮直接选几号，替代原来的数字输入框。老数据如果勾了多个星期几，仍显示原多选按钮以免丢数据
-- **时间统计跟随所选日期**：时间页日期条选了某天（比如昨天）再打开时间统计，「当日」就是那天的数据（总量、扇形分布、当日甘特时间轴都以所选日为基准），弹窗里会显示「统计基准：X月X日」；「近 14 天」趋势也改为截止到所选日期
-
-## v2.4.30 更新
-
-- **新建任务「周期」改为单行选择器**：原来一排（每日/工作日/周末/每周…/每月…/间隔）小芯片收进一个「重复频率」选择行，点开是带说明的选项弹窗（当前项打勾），选中即回填；选「每周/每月/间隔」后下方的具体设置照旧显示
-- **修复自定义模块编辑界面卡死/无响应**：编辑模块时字段名打不了字、点按钮没反应、过一会儿才一起弹出来的问题已修复（原因是列表原地修改 Compose 检测不到变化导致界面冻结），现在输入和点击即时生效
-- **模块内删除全部改为图标**：模块卡片的「删」、字段定义的「移除」、历史记录的「删」统一换成垃圾桶图标
-- **新建/编辑弹窗整体美化**：任务/目标/自定义模块/记录/时间标签的新建与编辑弹窗统一为大圆角卡片 + 标题栏右上角关闭按钮 + 底部全宽保存按钮的样式
-- **目标点击弹出详情**：目标页点目标卡片，从下往上弹出详情——进度环与百分比、描述、标签、绑定时间标签、起止日期、量化进度、子目标列表、任务完成数、创建时间，附「添加子目标」「编辑」快捷按钮（展开/折叠仍走右侧箭头）
-- **时间统计点图看明细**：统计弹窗里的扇形图（含图例行）、各标签时长行、当日甘特图行都可点击，弹出该标签所选时间范围内的每条计时记录明细（日期、起止时间、时长、备注，顶部显示合计），类似 PC 端点甘特图
-- **健康页支持滑动切换**：在页面左右滑动即可切换顶部标签（总览→睡眠→体重→…），与点标签双向联动
-- **按钮图标化**：量化任务的「＋加」改为纯 + 图标；健康「新增容器/添加锻炼项目/添加用药」、标签「新标签」、AI「添加供应商」等所有 ＋ 文字按钮统一为加号图标 + 文字
-
-## v2.4.29 更新
-
-- **修复量化任务完成状态与电脑不一致**：量化任务进度达到目标后，电脑显示已完成、手机却还在「进行中」——原因是手机端判定当日完成还额外要求「最后完成日期=当天」，而电脑端达标时只标记完成状态。现已对齐：进度达标即归入「今日已完成」
-- **任务/目标排序与电脑同步**：手机端列表排序规则改为与桌面端完全一致，同一份数据两端显示顺序相同
-  - 任务列表：优先级高的在前，再按拖动顺序；目标页里的任务、任务详情里的子任务同样对齐
-  - 目标列表：按排序号，相同排序号时新创建的在前；子目标按创建先后；目标地图同序
-  - 无论在电脑还是手机上拖动排序，另一端显示都会一致
-- **任务页日期条放开限制**：原来只能翻 今天前7天/后14天，现在前后各一年可随意横滑；每月 1 号显示月份方便定位，「回到今天」一键居中
-- **时间页新增滑条日历**：「今日计时」下方加了一条可横滑的日期条，点选某一天即可查看那一天的计时统计——当日计时/记录数、当日记录明细、当日时间分布图都会跟随切换；有记录的日子有圆点标记，点「回到今天」快速返回
-
-## v2.4.28 更新
-
-- **修复系统返回键逐级返回**：此前在 设置 → 关于（或外观/云同步/备份/AI 等分类子页）按手机自带返回，会一下退回主界面
-  - 现在系统返回与左上角返回按钮一致：主界面 → 设置 → 分类子页，按返回先回设置，再按回主界面，逐级退出
-  - 更深层的也修了：设置 → 自定义模块 → 管理模块，按返回回到自定义模块页，再逐级退回
-  - 其余页面（地图/盘点/各弹窗）行为不变；弹窗本来就支持返回键关闭
-
-## v2.4.27 更新
-
-- **喝水目标与桌面端统一**：手机端改用与 PC 相同的 HealthWaterGoal 设置键，双端同步互通——电脑上改了喝水目标，手机下载后即生效；手机上改了，上传后电脑也生效
-  - 本机旧的 water_goal 键在首次打开健康页/目标设置时自动迁移为新键并清除，数值不丢
-  - 番茄钟 6 项设置与统计标签范围此前已与 PC 共用同一套键，同为双端互通
-  - 明确同步范围与备份一致：任务/子任务、完成记录、目标、任务标签（含颜色）、时间标签（含颜色）、时间统计、健康记录、喝水容器、用药、运动项目、复盘、设置共 15 个文件全部双向同步；PC 专属配置（AI 接口/自定义仪表盘/自定义模块）手机原样搬运不丢失
+📖 Full changelog (Chinese): [README_CN.md](README_CN.md) · 💻 Desktop version: [ME](https://github.com/nailao946/ME)
 
 ---
 
 ## License
 
-MIT（完整文本见 [LICENSE](LICENSE)）
-
+MIT

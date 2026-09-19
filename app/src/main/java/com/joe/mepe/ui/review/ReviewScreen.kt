@@ -66,11 +66,14 @@ fun ReviewScreen(nav: (String) -> Unit) {
     // 统计口径（与桌面端一致）：总任务数=当日应做的任务（子任务、未设每日目标的量化、非当日循环任务不计）；
     // 完成=当日完成（量化=当日打卡/达标，一次性=完成当天，周期=当日打卡记录）
     val duePerDay = days.map { d -> tasks.count { TaskLogic.dueOnDate(it, d) } }
-    val donePerDay = days.map { d -> tasks.count { TaskLogic.doneOnDate(it, d, completions) } }
+    val donePerDay = days.map { d -> tasks.count {
+        TaskLogic.dueOnDate(it, d) && TaskLogic.doneOnDate(it, d, completions)
+    } }
     val totalDue = duePerDay.sum()
     val doneTotal = donePerDay.sum()
-    val validRates = days.indices.mapNotNull { i -> if (duePerDay[i] > 0) donePerDay[i].toDouble() / duePerDay[i] else null }
-    val avgRate = if (validRates.isEmpty()) null else validRates.average()
+    val completionRate = if (totalDue > 0) doneTotal.toDouble() / totalDue else null
+    val dueDays = duePerDay.count { it > 0 }
+    val fullDays = days.indices.count { i -> duePerDay[i] > 0 && donePerDay[i] >= duePerDay[i] }
 
     // 较上期：今日比昨天，周盘点比上周，月盘点比上个月
     val prevStart = when (mode) { 0 -> today.minusDays(1); 1 -> start.minusDays(7); else -> start.minusMonths(1) }
@@ -80,8 +83,8 @@ fun ReviewScreen(nav: (String) -> Unit) {
     val prevDone = prevDays.sumOf { d -> tasks.count { TaskLogic.doneOnDate(it, d, completions) } }
     val prevRate = if (prevTotal > 0) prevDone.toDouble() / prevTotal else null
     val cmpLabel = if (mode == 0) "较昨日" else "较上期"
-    val rateTrend = if (avgRate != null && prevRate != null) {
-        val diff = Math.round((avgRate - prevRate) * 100)
+    val rateTrend = if (completionRate != null && prevRate != null) {
+        val diff = Math.round((completionRate - prevRate) * 100)
         "$cmpLabel${if (diff >= 0) "+" else ""}$diff%" to (diff >= 0)
     } else null
     val doneTrend = if (prevTotal > 0 || totalDue > 0) {
@@ -105,29 +108,37 @@ fun ReviewScreen(nav: (String) -> Unit) {
         Spacer(Modifier.height(8.dp))
 
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatChip("完成率", avgRate?.let { "${(it * 100).toInt()}%" } ?: "—", Modifier.weight(1f),
+            StatChip("完成率", completionRate?.let { "${(it * 100).toInt()}%" } ?: "—", Modifier.weight(1f),
                 trend = rateTrend?.first, trendUp = rateTrend?.second ?: true)
             StatChip("完成任务", "$doneTotal / $totalDue 个", Modifier.weight(1f),
                 trend = doneTrend?.first, trendUp = doneTrend?.second ?: true)
-            if (mode == 0) StatChip("待完成任务", "${(totalDue - doneTotal).coerceAtLeast(0)} 个", Modifier.weight(1f))
-            else StatChip("活跃天数", "${validRates.size} 天", Modifier.weight(1f))
+            if (mode == 0) {
+                StatChip("今日全勤", when {
+                    totalDue == 0 -> "—"
+                    doneTotal >= totalDue -> "是"
+                    else -> "否"
+                }, Modifier.weight(1f))
+            } else {
+                StatChip("全勤日数", "$fullDays / $dueDays 天", Modifier.weight(1f))
+            }
         }
         Spacer(Modifier.height(8.dp))
 
-        SectionCard(title = if (mode == 0) "近7天每日完成率" else "每日完成率趋势") {
+        SectionCard(title = "每日完成任务") {
             if (mode == 0) {
-                // 今日页：当天没有趋势可画，附看近 7 天完成率
+                // 今日页展示近 7 天完成数量，避免与顶部完成率重复
                 val days7 = (6 downTo 0).map { today.minusDays(it.toLong()) }
-                val due7 = days7.map { d -> tasks.count { TaskLogic.dueOnDate(it, d) } }
-                val done7 = days7.map { d -> tasks.count { TaskLogic.doneOnDate(it, d, completions) } }
-                if (due7.all { it == 0 }) EmptyHint("近7天没有任务")
+                val done7 = days7.map { d -> tasks.count {
+                    TaskLogic.dueOnDate(it, d) && TaskLogic.doneOnDate(it, d, completions)
+                } }
+                if (done7.all { it == 0 }) EmptyHint("近7天没有完成任务")
                 else BarChart(
-                    days7.indices.map { i -> if (due7[i] == 0) 0.0 else done7[i] * 100.0 / due7[i] },
+                    done7.map { it.toDouble() },
                     days7.map { "${it.monthValue}/${it.dayOfMonth}" }
                 )
-            } else if (validRates.isEmpty()) EmptyHint("此范围没有任务")
+            } else if (days.all { d -> tasks.none { TaskLogic.dueOnDate(it, d) } }) EmptyHint("此范围没有任务")
             else BarChart(
-                days.indices.map { i -> if (duePerDay[i] == 0) 0.0 else donePerDay[i] * 100.0 / duePerDay[i] },
+                donePerDay.map { it.toDouble() },
                 days.map { "${it.dayOfMonth}" }
             )
         }
@@ -189,7 +200,7 @@ fun ReviewScreen(nav: (String) -> Unit) {
                 Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
                     Text(if (mode == 1) "本周盘点" else "本月盘点", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(8.dp))
-                    if (avgRate != null) Text("本期完成率：${(avgRate * 100).toInt()}%", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                    if (completionRate != null) Text("本期完成率：${(completionRate * 100).toInt()}%", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(8.dp))
                     LabeledField("做得好的", success, { success = it }, singleLine = false)
                     LabeledField("待改进", failure, { failure = it }, singleLine = false)
@@ -200,7 +211,7 @@ fun ReviewScreen(nav: (String) -> Unit) {
                         Button(onClick = {
                             Repos.addReview(Review(
                                 type = mode - 1, reviewDate = java.time.LocalDateTime.now(),
-                                completionRate = avgRate ?: 0.0,
+                                completionRate = completionRate ?: 0.0,
                                 successReasons = success.ifBlank { null },
                                 failureReasons = failure.ifBlank { null },
                                 personalNotes = notes.ifBlank { null },

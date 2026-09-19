@@ -84,21 +84,107 @@ object TaskLogic {
     fun doneCountOn(taskId: Int, date: LocalDate, completions: List<TaskCompletionRecord>): Int =
         completions.count { it.taskId == taskId && it.date == date.toString() }
 
-    /** 展示用的"当日已完成" */
+    /** 任务"永久完成"的日期（一次性=完成当天；量化=达标当天；循环类按天打卡无永久完成日，返回 null） */
+    fun completedOn(t: TaskItem): LocalDate? {
+        if (t.type == TaskTypes.RECURRING) return null
+        if (t.type == TaskTypes.QUANTITATIVE) {
+            val target = t.quantitativeTarget
+            val reached = target != null && target > 0 && (t.quantitativeCurrent ?: 0.0) >= target
+            return if (reached) t.completedAt?.toLocalDate() else null
+        }
+        // 完成时间缺失（旧数据）时退回到起始日/创建日，保证「过去完成」分组与桌面端一致
+        return if (t.isCompleted)
+            (t.completedAt ?: t.lastCompletedDate ?: t.startDate ?: t.createdAt).toLocalDate()
+        else null
+    }
+
+    /**
+     * 确保量化任务已落"今日基线"快照（跨日首次访问时以当前值滚动，漏几天也只落当天一次）。
+     * 当日完成口径：Accumulate = 当前值 - 今日基线 >= 每日目标；Update = 当前值 >= 每日目标。
+     */
+    fun ensureQuantBaseline(t: TaskItem) {
+        if (t.type != TaskTypes.QUANTITATIVE) return
+        val today = LocalDate.now()
+        if (t.quantSnapDate?.toLocalDate() == today) return
+        t.quantSnapDate = LocalDateTime.now()
+        t.quantSnapValue = t.quantitativeCurrent ?: t.quantitativeStart ?: 0.0
+        Repos.updateTask(t)
+    }
+
+    /**
+     * 量化任务每日目标的"当日完成"判定：今天按基线口径实时重算并写/删当日记录，历史日期直接查记录。
+     */
+    fun evalQuantDaily(t: TaskItem, date: LocalDate): Boolean {
+        val dailyMin = t.quantitativeDailyMin ?: return false
+        if (dailyMin <= 0) return false
+        if (date != LocalDate.now())
+            return Repos.completions().any { it.taskId == t.id && it.date == date.toString() }
+        ensureQuantBaseline(t)
+        val cur = t.quantitativeCurrent ?: 0.0
+        val base = t.quantSnapValue ?: cur
+        val dayMet = if (t.quantitativeMode == QuantModes.UPDATE) cur >= dailyMin else cur - base >= dailyMin
+        val completions = Repos.completions()
+        if (dayMet) {
+            if (completions.none { it.taskId == t.id && it.date == date.toString() })
+                Repos.addCompletion(t.id, date)
+        } else {
+            if (completions.any { it.taskId == t.id && it.date == date.toString() })
+                Repos.removeCompletion(t.id, date)
+        }
+        return dayMet
+    }
+
+    /**
+     * 只读版「当日已完成」判定：与 isDoneOn 同口径，但**不写/删当日记录**。
+     * 列表 / 日历等渲染期调用这个，避免组合期间反复触发 IO 造成卡顿；
+     * 真正落记录仍由打卡/编辑等用户动作触发。
+     */
+    fun isDoneReadonly(t: TaskItem, d: LocalDate, completions: List<TaskCompletionRecord>): Boolean {
+        if (t.type == TaskTypes.QUANTITATIVE) {
+            val target = t.quantitativeTarget
+            if (target != null && target > 0 && (t.quantitativeCurrent ?: 0.0) >= target) return true
+            val dailyMin = t.quantitativeDailyMin ?: return false
+            if (dailyMin <= 0.0) return false
+            if (d == LocalDate.now()) {
+                val cur = t.quantitativeCurrent ?: 0.0
+                val base = if (t.quantSnapDate?.toLocalDate() == d) (t.quantSnapValue ?: cur) else cur
+                return if (t.quantitativeMode == QuantModes.UPDATE) cur >= dailyMin else cur - base >= dailyMin
+            }
+            return completions.any { it.taskId == t.id && it.date == d.toString() }
+        }
+        if (t.type == TaskTypes.ONE_TIME && t.isCompleted) return completedOn(t) == d
+        val need = when (t.recurringPattern) {
+            RecPatterns.CUSTOM -> t.recurringTimesPerDay?.takeIf { it > 0 }
+                ?: t.recurringTimesPerWeek?.takeIf { it > 0 }?.let { 1 }
+            else -> null
+        }
+        val done = doneCountOn(t.id, d, completions)
+        val byRecords = if (need != null) done >= need else done > 0
+        return byRecords || (t.isCompleted && t.completedAt?.toLocalDate() == d)
+    }
+
+    /** 展示用的"当日已完成"（任务列表/日历按日判定） */
     fun isDoneOn(t: TaskItem, date: LocalDate, completions: List<TaskCompletionRecord>): Boolean {
         if (t.type == TaskTypes.QUANTITATIVE) {
-            // 与桌面端一致：进度达到目标即算完成（桌面端达标只置 IsCompleted，不写 LastCompletedDate）
-            val target = t.quantitativeTarget ?: return false
-            return (t.quantitativeCurrent ?: 0.0) >= target
+            val target = t.quantitativeTarget
+            // 总目标达成后是永久完成；完成日期只用于历史分组。
+            if (target != null && target > 0 && (t.quantitativeCurrent ?: 0.0) >= target)
+                return true
+            // 未达标：每日目标口径（今天按基线实时判定，历史查当日记录）
+            return (t.quantitativeDailyMin ?: 0.0) > 0 && (
+                if (date == LocalDate.now()) evalQuantDaily(t, date)
+                else completions.any { it.taskId == t.id && it.date == date.toString() }
+                )
         }
-        if (t.type == TaskTypes.ONE_TIME && t.isCompleted) return true
+        if (t.type == TaskTypes.ONE_TIME && t.isCompleted) return completedOn(t) == date
         val need = when (t.recurringPattern) {
             RecPatterns.CUSTOM -> t.recurringTimesPerDay?.takeIf { it > 0 }
                 ?: t.recurringTimesPerWeek?.takeIf { it > 0 }?.let { 1 }
             else -> null
         }
         val done = doneCountOn(t.id, date, completions)
-        return if (need != null) done >= need else done > 0
+        val byRecords = if (need != null) done >= need else done > 0
+        return byRecords || (t.isCompleted && t.completedAt?.toLocalDate() == date)
     }
 
     // ============ 统计口径（定期盘点：完成任务 / 总任务数，按天计） ============
@@ -121,7 +207,7 @@ object TaskLogic {
         return occursOnDate(t, d)
     }
 
-    /** 某日是否算"完成"：一次性=完成当天；周期/循环=当日打卡记录（含自定义次数）；量化=当日打卡记录或达标当天 */
+    /** 某日是否算"完成"：总目标量化达成后永久完成；其他类型按当日打卡规则 */
     fun doneOnDate(t: TaskItem, d: LocalDate, completions: List<TaskCompletionRecord>): Boolean {
         if (!countedForStats(t)) return false
         return when (t.type) {
@@ -133,8 +219,22 @@ object TaskLogic {
         }
     }
 
-    /** 点击打卡 / 取消打卡 */
+    /** 点击打卡 / 取消打卡（一次性/循环类）；量化任务点击始终增加一步，避免达成每日目标后误删当日记录 */
     fun toggleDone(t: TaskItem, date: LocalDate) {
+        if (t.type == TaskTypes.QUANTITATIVE) {
+            ensureQuantBaseline(t)
+            val step = quantStep(t)
+            t.quantitativeCurrent = (t.quantitativeCurrent ?: t.quantitativeStart ?: 0.0) + step
+            val target = t.quantitativeTarget
+            if (target != null && target > 0 && t.quantitativeCurrent!! >= target) {
+                t.isCompleted = true; t.completedAt = LocalDateTime.now()
+                t.lastCompletedDate = LocalDateTime.now()
+            }
+            Repos.updateTask(t)
+            if (target == null || target <= 0 || t.quantitativeCurrent!! < target) evalQuantDaily(t, date)
+            return
+        }
+
         val completions = Repos.completions()
         if (isDoneOn(t, date, completions)) {
             // 取消当天所有打卡
@@ -147,22 +247,15 @@ object TaskLogic {
             if (t.type == TaskTypes.ONE_TIME) {
                 t.isCompleted = true; t.completedAt = LocalDateTime.now(); Repos.updateTask(t)
             }
-            if (t.type == TaskTypes.QUANTITATIVE) {
-                val step = t.quantitativeDailyMin ?: 1.0
-                t.quantitativeCurrent = (t.quantitativeCurrent ?: t.quantitativeStart ?: 0.0) + step
-                if (t.quantitativeTarget != null && t.quantitativeCurrent!! >= t.quantitativeTarget!!) {
-                    t.isCompleted = true; t.completedAt = LocalDateTime.now()
-                    t.lastCompletedDate = LocalDateTime.now()
-                }
-                Repos.updateTask(t)
-            }
         }
     }
 
-    /** 量化任务：手动加/减进度（到达目标自动标记完成；退回则取消完成） */
+    /** 量化任务：手动加/减进度（到达目标自动标记完成；退回则取消完成；未达标按每日目标重算当日完成） */
     fun adjustQuantitative(t: TaskItem, delta: Double) {
         val start = t.quantitativeStart ?: 0.0
         val cur = t.quantitativeCurrent ?: start
+        // 先落今日基线，再应用本次变更，确保本次增量计入今天而不是基线
+        ensureQuantBaseline(t)
         t.quantitativeCurrent = (cur + delta).coerceAtLeast(start)
         val target = t.quantitativeTarget
         if (target != null && target > 0) {
@@ -179,6 +272,10 @@ object TaskLogic {
             }
         }
         Repos.updateTask(t)
+        // 未达标且设了每日目标：按"当前值-今日基线"重算当日完成记录
+        if (target == null || target <= 0 || t.quantitativeCurrent!! < target) {
+            if ((t.quantitativeDailyMin ?: 0.0) > 0) evalQuantDaily(t, LocalDate.now())
+        }
     }
 
     /** 量化任务点击打卡圈的步长（每日最低量，默认 1） */
@@ -200,5 +297,16 @@ object TaskLogic {
                 ((c.quantitativeCurrent ?: 0.0) / c.quantitativeTarget!!).coerceIn(0.0, 1.0)
             else if (isDoneOn(c, date, completions)) 1.0 else 0.0
         }.average().coerceIn(0.0, 1.0)
+    }
+
+    /** 更新目标首次达到/回退到 100% 的时间，调用方负责持久化。 */
+    fun refreshGoalCompletion(g: Goal, allTasks: List<TaskItem>, date: LocalDate = LocalDate.now()): Double {
+        val progress = goalProgress(g, allTasks, date)
+        if (progress >= 0.999) {
+            if (g.goalCompletedAt == null) g.goalCompletedAt = date.atStartOfDay()
+        } else {
+            g.goalCompletedAt = null
+        }
+        return progress
     }
 }

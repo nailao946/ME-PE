@@ -57,6 +57,10 @@ object SyncConfig {
         var providerShas: Map<String, Map<String, String>> = emptyMap(),
         var providerLastPush: Map<String, String> = emptyMap(),
         var branches: Map<String, String> = emptyMap(),
+        // 每个文件上次同步后的本地内容 MD5，用于下载时识别本机未上传的修改
+        var fileHashes: Map<String, String> = emptyMap(),
+        // 待处理的同步冲突（格式：云端键|文件名）。上传时「双方都改过且无法自动合并」会记在这里，等用户决定用本机还是云端
+        var pendingConflicts: List<String> = emptyList(),
     )
 
     private const val FILE = "sync_config.json"
@@ -152,7 +156,99 @@ private fun md5(text: String): String =
 
 private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
+/** 追加型数据文件：双端冲突时按条目合并（Uid 去重），而不是跳过/覆盖 */
+private val appendOnlyFiles = setOf("time_records", "focus_sessions", "task_completions", "health_records", "water_containers")
+
+private fun objOf(el: kotlinx.serialization.json.JsonElement): kotlinx.serialization.json.JsonObject? =
+    el as? kotlinx.serialization.json.JsonObject
+
+/** 取对象字段（大小写不敏感，兼容旧数据），返回 null 表示缺失/非字符串 */
+private fun strOf(el: kotlinx.serialization.json.JsonElement, name: String): String? {
+    val o = objOf(el) ?: return null
+    val v = o.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value ?: return null
+    return (v as? kotlinx.serialization.json.JsonPrimitive)?.content
+}
+
+/** 无 Uid 时的兜底去重键：打卡按任务+日期、健康按类型+日期、容器按名称、其余按原始内容完全相同 */
+private fun mergeKey(el: kotlinx.serialization.json.JsonElement, file: String): String = when (file) {
+    "task_completions" -> {
+        val t = strOf(el, "TaskId"); val d = strOf(el, "Date")
+        if (t != null && d != null) "t|$t|$d" else el.toString()
+    }
+    "health_records" -> {
+        val t = strOf(el, "Type"); val d = strOf(el, "Date")
+        if (t != null && d != null) "h|$t|$d" else el.toString()
+    }
+    "water_containers" -> strOf(el, "Name")?.let { "w|$it" } ?: el.toString()
+    else -> el.toString()
+}
+
+/** 给对象替换/新增一个字符串字段（保留其它字段原样） */
+private fun setProp(el: kotlinx.serialization.json.JsonElement, name: String, value: String): kotlinx.serialization.json.JsonElement {
+    val o = objOf(el) ?: return el
+    return buildJsonObject {
+        o.forEach { (k, v) -> if (!k.equals(name, ignoreCase = true)) put(k, v) }
+        put(name, value)
+    }
+}
+
+/**
+ * 合并两个追加型 JSON 数组（按 Uid 去重，无 Uid 走兜底键；旧条目自动补 Uid）。
+ * 返回 (合并后的文本, 新增条目数)；本地无需变化时返回原文本。
+ */
+private fun mergeJson(localText: String, remoteText: String, file: String): Pair<String, Int> {
+    fun parse(t: String): List<kotlinx.serialization.json.JsonElement>? = try {
+        (JsonStore.json.parseToJsonElement(t) as? kotlinx.serialization.json.JsonArray)?.toList()
+    } catch (_: Exception) { null }
+    val local = parse(localText) ?: return localText to 0
+    val remote = parse(remoteText) ?: return localText to 0
+    if (remote.isEmpty()) return localText to 0
+    if (local.isEmpty()) return remoteText to remote.size
+
+    var result = local.toMutableList()
+    var uidMigrated = false
+    result.indices.forEach { i ->
+        if (strOf(result[i], "Uid").isNullOrBlank()) {
+            result[i] = setProp(result[i], "Uid", java.util.UUID.randomUUID().toString().replace("-", ""))
+            uidMigrated = true
+        }
+    }
+    val seen = HashSet<String>()
+    var maxId = 0
+    result.forEach { el ->
+        val uid = strOf(el, "Uid")
+        seen.add(if (!uid.isNullOrBlank()) "u|$uid" else mergeKey(el, file))
+        (objOf(el)?.get("Id")?.toString()?.trim('"')?.toIntOrNull())?.let { if (it > maxId) maxId = it }
+    }
+    var added = 0
+    for (rel in remote) {
+        val uid = strOf(rel, "Uid")
+        val key = if (!uid.isNullOrBlank()) "u|$uid" else mergeKey(rel, file)
+        if (seen.contains(key)) continue
+        var clone = rel
+        if (strOf(clone, "Uid").isNullOrBlank())
+            clone = setProp(clone, "Uid", java.util.UUID.randomUUID().toString().replace("-", ""))
+        // Id 仅本地展示用：与本地冲突时重新分配，避免重复
+        val cid = (objOf(clone)?.get("Id")?.toString()?.trim('"')?.toIntOrNull())
+        if (cid != null && cid <= maxId) {
+            maxId++
+            clone = setProp(clone, "Id", maxId.toString())
+        } else if (cid != null) {
+            maxId = cid
+        }
+        seen.add("u|" + (strOf(clone, "Uid") ?: ""))
+        result.add(clone)
+        added++
+    }
+    if (added == 0 && !uidMigrated) return localText to 0
+    return JsonStore.json.encodeToString(kotlinx.serialization.builtins.ListSerializer(
+        kotlinx.serialization.json.JsonElement.serializer()
+    ), result) to added
+}
+
 object CloudSync {
+    fun isAutoSyncEnabled(context: Context): Boolean = SyncConfig.load(context).autoPush
+
     /** 反馈提交目标仓库（项目 Issues，非用户的同步数据仓库）。反馈始终走 GitHub，与云同步方式无关 */
     private const val FEEDBACK_REPO = "nailao946/ME-PE"
 
@@ -210,10 +306,14 @@ object CloudSync {
 
     private fun providerLabel(p: String) = when (p) { "gitee" -> "Gitee"; "webdav" -> "WebDAV"; else -> "GitHub" }
 
+    /** 单云端同步结果：ok=该云端成功（含部分成功），text=给用户的明细 */
+    private data class Outcome(val ok: Boolean, val text: String)
+
     /**
      * 上传 JsonData 全部文件到云端。多云同步：所有已配置的云端逐个上传，任一成功即有备份，
      * 某个失败不影响其他（下次上传会自动把失败的补齐）。
-     * 防覆盖（按云端分别记录版本）：某文件在某个云端被别的设备改过时，该云端跳过此文件并提示先下载。
+     * 防覆盖：按云端分别记录版本标识，并在缺少基线时用「内容哈希」比对云端与本地，
+     * 全程不依赖文件时间；某文件在某个云端被别的设备改过时，该云端跳过此文件并提示先下载。
      */
     suspend fun push(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
@@ -221,81 +321,149 @@ object CloudSync {
         if (files.isEmpty()) return@withContext "没有可上传的数据"
         val targets = configuredProviders(conf)
         if (targets.isEmpty()) return@withContext "✗ 请先在「设置 → 云同步」配置好同步账号（GitHub / Gitee / WebDAV）后再上传"
-        val parts = mutableListOf<String>()
-        var okCount = 0
+        val lines = mutableListOf<String>()
+        val okNames = mutableListOf<String>()
+        val badNames = mutableListOf<String>()
         for (p in targets) {
-            try {
-                val r = pushProvider(context, conf, p, files)
-                parts += "${providerLabel(p)} $r"
-                if (r.startsWith("✓")) okCount++
+            val o = try {
+                pushProvider(context, conf, p, files)
             } catch (e: Exception) {
-                parts += "${providerLabel(p)} ✗ ${e.message ?: "网络异常"}"
+                Outcome(false, "✗ ${e.message ?: "网络异常"}")
             }
+            lines += "${providerLabel(p)}：${o.text}"
+            if (o.ok) okNames += providerLabel(p) else badNames += providerLabel(p)
         }
-        if (okCount > 0) {
+        if (okNames.isNotEmpty()) {
             conf.lastPushAt = java.time.LocalDateTime.now().toString()
             SyncConfig.save(context, conf)
         }
-        when {
-            okCount == targets.size -> "✓ 已上传到全部 ${targets.size} 个云端（${parts.joinToString("；")}）"
-            okCount > 0 -> "✓ 已上传 ${okCount}/${targets.size} 个云端（${parts.joinToString("；")}）"
-            else -> "✗ 上传失败（${parts.joinToString("；")}）"
+        val head = when {
+            okNames.isEmpty() -> "✗ 上传失败：${targets.size} 个云端均未成功"
+            badNames.isEmpty() -> "✓ 上传完成：已上传到 ${okNames.joinToString("、")}"
+            else -> "✓ 上传完成（部分云端未成功）：成功 ${okNames.joinToString("、")}；未成功 ${badNames.joinToString("、")}"
         }
+        (listOf(head) + lines).joinToString("\n")
     }
 
-    /** 上传到单个云端；返回以 ✓/✗ 开头的结果短语 */
-    private suspend fun pushProvider(context: Context, conf: SyncConfig.Conf, provider: String, files: List<File>): String {
+    /** 上传到单个云端 */
+    private suspend fun pushProvider(context: Context, conf: SyncConfig.Conf, provider: String, files: List<File>): Outcome {
         if (provider == "github") GitHubLogin.maybeRefresh(context, conf)
         val backend = backendFor(conf, provider)
         backend.ensureReady(context)
         val known = conf.providerShas[provider].orEmpty().toMutableMap()
+        val newHashes = conf.fileHashes.toMutableMap()
         var okCount = 0
         var skipped = 0
+        var mergedCount = 0
+        var localMerged = false
         var lastErr: String? = null
         for (f in files) {
             try {
+                val baseName = f.name.removeSuffix(".json")
+                val localText = f.readText()
+                val localHash = md5(localText)
                 val rev = backend.revOf(f.name)
-                // 云端被其它设备更新过而本地没有先下载 → 此云端跳过，避免覆盖
-                val k = known[f.name]
-                if (k != null && rev != null && k != rev) { skipped++; continue }
-                known[f.name] = backend.write(f.name, f.readText(), rev)
-                okCount++
+                // 「最新版本」判定：不依赖文件时间，用本云端基线 + 内容哈希双向比较
+                val baseline = known[f.name]
+                var remoteNewer = baseline != null && rev != null && baseline != rev
+                if (baseline == null && rev != null) {
+                    // 本机没有该云端的基线（首次上传到这个云端）：读回云端内容比对哈希，
+                    // 内容不同说明云端有别的设备留下、本机没下载过的数据 → 不能盲写覆盖
+                    val probe = backend.read(f.name)?.first
+                    if (probe != null && md5(probe) != localHash) remoteNewer = true
+                } else if (remoteNewer) {
+                    // 版本标识对不上也可能是「记账不准」（云端返回的 sha 缺失/格式差异），
+                    // 用内容哈希复核一次：内容其实一致就正常上传并刷新基线，避免永远卡在「云端较新」
+                    val probe = backend.read(f.name)?.first
+                    if (probe != null && md5(probe) == localHash) remoteNewer = false
+                }
+                if (remoteNewer) {
+                    if (appendOnlyFiles.contains(baseName)) {
+                        val remoteText = backend.read(f.name)?.first
+                        if (remoteText != null) {
+                            val merged = mergeJson(localText, remoteText, baseName)
+                            if (merged.first != localText) { f.writeText(merged.first); localMerged = true }
+                            known[f.name] = backend.write(f.name, merged.first, rev)
+                            mergedCount += merged.second
+                            okCount++
+                            newHashes[f.name] = md5(f.readText())
+                        }
+                    } else {
+                        skipped++
+                        val entry = "$provider|${f.name}"
+                        if (entry !in conf.pendingConflicts) conf.pendingConflicts = conf.pendingConflicts + entry
+                        continue
+                    }
+                } else {
+                    known[f.name] = backend.write(f.name, localText, rev)
+                    newHashes[f.name] = localHash
+                    okCount++
+                    conf.pendingConflicts = conf.pendingConflicts.filterNot { it == "$provider|${f.name}" }
+                }
+                // Git 两家 API 有频率限制：文件之间留最小间隔，降低触发限流概率
+                if (provider == "github" || provider == "gitee") Thread.sleep(250)
             } catch (e: Exception) { lastErr = e.message }
         }
-        if (okCount > 0) {
+        if (okCount > 0 || skipped > 0) {
             conf.providerShas = conf.providerShas + (provider to known.toMap())
             conf.providerLastPush = conf.providerLastPush + (provider to java.time.LocalDateTime.now().toString())
+            conf.fileHashes = newHashes.toMap()
             SyncConfig.save(context, conf)
         }
+        if (localMerged) DataBus.bump()
+        val detail = buildString {
+            if (mergedCount > 0) append("；合并 $mergedCount 条")
+            if (skipped > 0) append("；$skipped 个云端较新已跳过（请先下载）")
+            lastErr?.let { append("；错误：$it") }
+        }
         return when {
-            okCount == 0 && skipped > 0 -> "✗ 云端有 $skipped 个文件比本地新，已全部跳过（请先「下载数据」再上传）"
-            okCount == 0 -> "✗ ${lastErr ?: "上传失败"}"
-            else -> "✓ 已上传 $okCount/${files.size} 个" +
-                (if (skipped > 0) "；$skipped 个云端较新已跳过（请先下载）" else "") +
-                (lastErr?.let { "；错误：$it" } ?: "")
+            okCount == 0 && skipped > 0 -> Outcome(false, "✗ 云端有 $skipped 个文件比本地新，已全部跳过（请先「下载数据」再上传）$detail")
+            okCount == 0 -> Outcome(false, "✗ ${lastErr ?: "上传失败"}")
+            else -> Outcome(true, "✓ 已上传 $okCount/${files.size} 个$detail")
         }
     }
 
-    /** 从云端下载并覆盖本地 JsonData（先做本地备份）。
-     *  多云同步时下载源取「最近一次上传成功」的云端（数据最可能是最新基准），失败自动换下一个云端兜底。
-     *  写盘前校验是有效 JSON，损坏内容不会写进本地数据；单个文件失败不影响其它文件，
-     *  失败的文件名与原因会列在结果里。 */
+    /**
+     * 从所有已配置云端下载（追加型文件自动合并，其余文件以"最近上传成功"的云端优先、其余云端仅补漏），
+     * 每个云端独立汇报成功/失败原因。写盘前校验是有效 JSON，损坏内容不会写进本地数据。
+     * 版本判定不使用文件时间：以「云端内容哈希 vs 本地内容哈希 vs 上次同步基线」三向比较决定谁更新。
+     */
     suspend fun pull(context: Context): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
         val targets = configuredProviders(conf)
         if (targets.isEmpty()) return@withContext "✗ 请先在「设置 → 云同步」配置好同步账号（GitHub / Gitee / WebDAV）后再下载"
-        val ordered = (listOf(conf.provider) + targets.filter { it != conf.provider })
-            .distinct()
-            .sortedByDescending { conf.providerLastPush[it] ?: "" }
-        var lastErr: String? = null
+        val ordered = targets.sortedByDescending { conf.providerLastPush[it] ?: "" }
+        val alreadyDownloaded = mutableSetOf<String>()
+        val lines = mutableListOf<String>()
+        val okNames = mutableListOf<String>()
+        val badNames = mutableListOf<String>()
+        var anyData = false
         for (p in ordered) {
-            try { return@withContext pullProvider(context, conf, p) }
-            catch (e: Exception) { lastErr = "${providerLabel(p)}：${e.message ?: "网络异常"}" }
+            val o = try {
+                pullProvider(context, conf, p, alreadyDownloaded)
+            } catch (e: Exception) {
+                Outcome(false, "✗ ${e.message ?: "网络异常"}")
+            }
+            lines += "${providerLabel(p)}：${o.text}"
+            if (o.ok) {
+                okNames += providerLabel(p)
+                if (o.text.contains("下载") || o.text.contains("合并") || o.text.contains("保留")) anyData = true
+            } else badNames += providerLabel(p)
         }
-        "✗ 下载失败（$lastErr）"
+        if (anyData) {
+            conf.lastPullAt = java.time.LocalDateTime.now().toString()
+            SyncConfig.save(context, conf)
+            DataBus.bump()
+        }
+        val head = when {
+            okNames.isEmpty() -> "✗ 下载失败：${ordered.size} 个云端均未成功"
+            badNames.isEmpty() -> "✓ 下载完成：已从 ${okNames.joinToString("、")} 取到数据"
+            else -> "✓ 下载完成（部分云端未成功）：成功 ${okNames.joinToString("、")}；未成功 ${badNames.joinToString("、")}"
+        }
+        (listOf(head) + lines).joinToString("\n")
     }
 
-    private suspend fun pullProvider(context: Context, conf: SyncConfig.Conf, provider: String): String {
+    private suspend fun pullProvider(context: Context, conf: SyncConfig.Conf, provider: String, alreadyDownloaded: MutableSet<String>): Outcome {
         if (provider == "github") GitHubLogin.maybeRefresh(context, conf)
         val backend = backendFor(conf, provider)
         backend.ensureReady(context)
@@ -306,45 +474,187 @@ object CloudSync {
         } catch (e: Exception) {
             if (e.message?.contains("404") == true) emptyList() else throw e
         }
-        if (items.isEmpty()) return "同步目录为空，没有可下载的数据"
+        if (items.isEmpty()) return Outcome(true, "✓ 无数据（云端目录为空）")
 
-        // 本地备份
+        // 本地备份（全云端共用一次）
         val backupDir = File(context.filesDir, "JsonData_backup_${System.currentTimeMillis()}")
         backupDir.mkdirs()
         JsonStore.allFiles().forEach { it.copyTo(File(backupDir, it.name), overwrite = true) }
 
         var n = 0
+        var mergedCount = 0
+        var keptCount = 0
+        var sameCount = 0
         var lastErr: String? = null
         val failed = mutableListOf<String>()
         val newShas = conf.providerShas[provider].orEmpty().toMutableMap()
+        val currentLocalHashes = conf.fileHashes.toMutableMap()
         for (item in items) {
             try {
+                val fileName = item.name.removeSuffix(".json")
+                // 追加型文件：每个云端都合并；其余文件：只从第一个（最近上传成功的）云端下载，后续云端不重复覆盖
+                if (!appendOnlyFiles.contains(fileName) && item.name in alreadyDownloaded) continue
+                if (!item.name.endsWith(".json")) continue
+                val localFile = File(JsonStore.dir, item.name)
+                val localText = if (localFile.exists()) localFile.readText() else null
+                val localHash = localText?.let { md5(it) }
+
                 val r = backend.read(item.name)
                 val t = r?.first
-                if (t == null) {
-                    failed.add(item.name); lastErr = "文件内容为空"; continue
-                }
+                if (t == null) { failed.add(item.name); lastErr = "文件内容为空"; continue }
                 // 校验是有效 JSON 再写入，防止把传输损坏的内容存成本地数据
                 try { JsonStore.json.parseToJsonElement(t) } catch (_: Exception) {
                     failed.add(item.name); lastErr = "下载内容不是有效 JSON"; continue
                 }
-                File(JsonStore.dir, item.name).writeText(t)
-                newShas[item.name] = item.rev.ifBlank { r.second ?: md5(t) }
+                val remoteHash = md5(t)
+
+                if (appendOnlyFiles.contains(fileName) && localText != null) {
+                    // 追加型：始终按条目合并，任何一端都不会丢数据
+                    val merged = mergeJson(localText, t, fileName)
+                    if (merged.first != localText) { localFile.writeText(merged.first); mergedCount += merged.second }
+                    n++
+                    alreadyDownloaded.add(item.name)
+                    newShas[item.name] = item.rev.ifBlank { r.second ?: remoteHash }
+                    currentLocalHashes[item.name] = md5(localFile.readText())
+                    if (provider == "github" || provider == "gitee") Thread.sleep(250)
+                    continue
+                }
+
+                // 其余文件：三向比较（云端哈希 / 本地哈希 / 上次同步基线），不依赖文件时间
+                if (localText != null && localHash == remoteHash) {
+                    sameCount++
+                    alreadyDownloaded.add(item.name)
+                    newShas[item.name] = item.rev.ifBlank { r.second ?: remoteHash }
+                    currentLocalHashes[item.name] = localHash!!
+                    continue
+                }
+                // 本地自上次同步后改过（有未上传的修改）而云端内容不同 → 保留本地，避免未上传数据被覆盖
+                val baselineHash = conf.fileHashes[item.name]
+                if (localText != null && baselineHash != null && baselineHash != localHash) {
+                    keptCount++
+                    continue
+                }
+
+                localFile.writeText(t)
                 n++
+                alreadyDownloaded.add(item.name)
+                newShas[item.name] = item.rev.ifBlank { r.second ?: remoteHash }
+                currentLocalHashes[item.name] = md5(localFile.readText())
+                if (provider == "github" || provider == "gitee") Thread.sleep(250)
             } catch (e: Exception) {
                 failed.add(item.name)
                 lastErr = e.message
             }
         }
-        if (n > 0) {
+        if (n > 0 || mergedCount > 0 || sameCount > 0) {
             conf.providerShas = conf.providerShas + (provider to newShas.toMap())
-            conf.lastPullAt = java.time.LocalDateTime.now().toString()
+            conf.fileHashes = currentLocalHashes.toMap()
             SyncConfig.save(context, conf)
-            DataBus.bump()
         }
-        if (failed.isEmpty()) return "✓ 已从${providerLabel(provider)}下载 $n 个文件（原数据已备份）"
-        val names = failed.take(4).joinToString("、") + if (failed.size > 4) "等${failed.size}个文件" else ""
-        return "已从${providerLabel(provider)}下载 $n/${items.size} 个，失败：$names" + (lastErr?.let { "（$it）" } ?: "")
+        val extra = buildString {
+            if (mergedCount > 0) append("；合并 $mergedCount 条")
+            if (keptCount > 0) append("；保留本地未上传 $keptCount 个（先上传再下载即可同步）")
+            if (sameCount > 0) append("；$sameCount 个内容一致无需下载")
+        }
+        val failText = if (failed.isNotEmpty())
+            "；未成功：${failed.take(4).joinToString("、")}${if (failed.size > 4) "等${failed.size}个文件" else ""}" +
+                (lastErr?.let { "（$it）" } ?: "")
+        else lastErr?.let { "（$it）" } ?: ""
+        val summary = "下载 $n/${items.size} 个$extra$failText"
+        return if (failed.isEmpty()) Outcome(true, "✓ $summary（原数据已备份）")
+        else Outcome(n > 0, "⚠ $summary")
+    }
+
+    /**
+     * 连接诊断：逐个云端走「连接 → 列目录 → 读第一个文件」，给出每步状态与耗时。
+     * 上传/下载失败时先跑一遍，能把「令牌失效 / 仓库不存在 / 限流 / 网络」区分开。
+     */
+    suspend fun diagnose(context: Context): String = withContext(Dispatchers.IO) {
+        val conf = SyncConfig.load(context)
+        val lines = mutableListOf("诊断结果：")
+        for (key in listOf("github", "gitee", "webdav")) {
+            if (key !in configuredProviders(conf)) { lines += "• ${providerLabel(key)}：未配置，跳过"; continue }
+            val start = System.currentTimeMillis()
+            try {
+                val backend = backendFor(conf, key)
+                val target = backend.ensureReady(context)
+                val t1 = System.currentTimeMillis() - start
+                val items = try { backend.list() } catch (e: Exception) {
+                    if (e.message?.contains("404") == true) emptyList() else throw e
+                }
+                val t2 = System.currentTimeMillis() - start
+                if (items.isEmpty()) {
+                    lines += "✓ ${providerLabel(key)}：$target｜连接 ${t1}ms｜列目录 ${t2 - t1}ms｜云端还没有数据目录"
+                } else {
+                    val first = items.first()
+                    val text = backend.read(first.name)?.first
+                    val t3 = System.currentTimeMillis() - start
+                    lines += "✓ ${providerLabel(key)}：$target｜连接 ${t1}ms｜列目录 ${t2 - t1}ms（${items.size} 个文件）｜读 ${first.name} ${t3 - t2}ms（${text?.length ?: 0} 字符）"
+                }
+            } catch (e: Exception) {
+                lines += "✗ ${providerLabel(key)}：${e.message ?: "网络异常"}（耗时 ${System.currentTimeMillis() - start}ms）"
+            }
+        }
+        if (conf.pendingConflicts.isNotEmpty())
+            lines += "⚠ 有 ${conf.pendingConflicts.size} 个冲突等待处理（点「处理冲突」选择用本机还是云端）"
+        lines.joinToString("\n")
+    }
+
+    /** 当前待处理的冲突条目（provider|文件名） */
+    fun pendingConflicts(context: Context): List<String> = SyncConfig.load(context).pendingConflicts
+
+    /**
+     * 处理同步冲突：preferCloud=true 用云端覆盖本机，false 用本机覆盖云端。
+     * file/provider 都为空时处理全部；处理完刷新基线并从待处理清单移除，避免下次同步再报。
+     */
+    suspend fun resolveConflicts(context: Context, preferCloud: Boolean, provider: String? = null, file: String? = null): String = withContext(Dispatchers.IO) {
+        val conf = SyncConfig.load(context)
+        val targets = conf.pendingConflicts.filter { entry ->
+            val p = entry.substringBefore('|')
+            val f = entry.substringAfter('|')
+            (provider == null || p == provider) && (file == null || f == file)
+        }
+        if (targets.isEmpty()) return@withContext "没有待处理的冲突"
+
+        var ok = 0
+        val errors = mutableListOf<String>()
+        val files = JsonStore.allFiles()
+        for (entry in targets) {
+            val p = entry.substringBefore('|')
+            val name = entry.substringAfter('|')
+            try {
+                val backend = backendFor(conf, p)
+                backend.ensureReady(context)
+                val localFile = File(JsonStore.dir, name)
+                if (preferCloud) {
+                    val r = backend.read(name) ?: throw RuntimeException("云端已没有这个文件")
+                    try { JsonStore.json.parseToJsonElement(r.first) } catch (_: Exception) {
+                        throw RuntimeException("云端内容不是有效 JSON")
+                    }
+                    localFile.writeText(r.first)
+                    val known = conf.providerShas[p].orEmpty().toMutableMap()
+                    known[name] = r.second ?: md5(r.first)
+                    conf.providerShas = conf.providerShas + (p to known)
+                    conf.fileHashes = conf.fileHashes + (name to md5(r.first))
+                } else {
+                    val local = files.firstOrNull { it.name == name } ?: throw RuntimeException("本机已没有这个文件")
+                    val text = local.readText()
+                    val rev = backend.revOf(name)
+                    val known = conf.providerShas[p].orEmpty().toMutableMap()
+                    known[name] = backend.write(name, text, rev).ifBlank { md5(text) }
+                    conf.providerShas = conf.providerShas + (p to known)
+                    conf.fileHashes = conf.fileHashes + (name to md5(text))
+                }
+                conf.pendingConflicts = conf.pendingConflicts - entry
+                ok++
+            } catch (e: Exception) {
+                errors += "$name（${providerLabel(p)}）：${e.message ?: "失败"}"
+            }
+        }
+        if (ok > 0) SyncConfig.save(context, conf)
+        DataBus.bump()
+        val head = "已处理 $ok/${targets.size} 个冲突（${if (preferCloud) "采用云端" else "采用本机"}）"
+        if (errors.isEmpty()) head else "$head；失败：${errors.joinToString("；")}"
     }
 }
 
@@ -369,11 +679,32 @@ private class GitBackend(
     // 分支按云端独立记忆（多云同步时 GitHub=main 与 Gitee=master 互不干扰）
     private val branch get() = conf.branches[providerKey]?.takeUnless { it.isBlank() }
         ?: (if (isGitee) "master" else "main")
+    private var ctx: Context? = null
+
+    /**
+     * 在已配置分支上执行请求；若该分支在云端不存在（404）自动换另一个常用分支（main ↔ master）重试一次，
+     * 成功后记住可用的分支。Gitee 与 GitHub 新仓库的默认分支并不一致，缺了这层兜底会让所有文件请求 404。
+     */
+    private fun <T> onBranch(action: (String) -> T): T = try {
+        action(branch)
+    } catch (e: Exception) {
+        if (e.message?.contains("404") != true) throw e
+        val alt = if (branch == "master") "main" else "master"
+        val r = action(alt)
+        conf.branches = conf.branches + (providerKey to alt)
+        conf.branch = alt
+        ctx?.let { SyncConfig.save(it, conf) }
+        r
+    }
 
     /** 统一错误文案：401 = 令牌在云端侧已失效（被撤销或过期），引导重新配置 */
     private fun describeError(code: Int, text: String): String = when {
         code == 401 && isGitee -> "Gitee 令牌已失效（被撤销或已过期），请在「设置 → 云同步」重新填写私人令牌"
         code == 401 -> "GitHub 授权已失效（令牌被撤销或已过期），请重新授权登录一次即可恢复"
+        code == 403 && isGitee -> "Gitee 请求过于频繁被限流（HTTP 403），已自动重试一次仍失败，请稍等几分钟再试"
+        code == 404 && isGitee -> "Gitee 找不到 $owner/$repoName 的 data 目录（HTTP 404）：请确认私人令牌勾选了 projects 权限，且该仓库确实存在"
+        code == 404 -> "GitHub 找不到 $owner/$repoName 的 data 目录（HTTP 404）"
+        code == 400 && isGitee -> "Gitee 拒绝了请求（HTTP 400）：${text.take(200)}"
         else -> "HTTP $code：${text.take(300)}"
     }
 
@@ -387,13 +718,24 @@ private class GitBackend(
         return b.build()
     }
 
-    /** 发请求并返回原始响应体；非 2xx 抛异常 */
+    /** 发请求并返回原始响应体；非 2xx 抛异常（Gitee 限流 403 自动退避重试一次） */
     private fun call(url: String, method: String, body: String?, accept: String = "application/vnd.github+json"): String {
-        http.newCall(request(url, method, body, accept)).execute().use { r ->
-            val text = r.body?.string() ?: ""
-            if (!r.isSuccessful) throw RuntimeException(describeError(r.code, text))
-            return text
+        var last: RuntimeException? = null
+        repeat(if (isGitee && method != "GET") 2 else 1) { attempt ->
+            try {
+                http.newCall(request(url, method, body, accept)).execute().use { r ->
+                    val text = r.body?.string() ?: ""
+                    if (!r.isSuccessful) throw RuntimeException(describeError(r.code, text))
+                    return text
+                }
+            } catch (e: RuntimeException) {
+                if (attempt == 0 && isGitee && e.message?.contains("403") == true) {
+                    last = e
+                    try { Thread.sleep(3000) } catch (_: InterruptedException) { }
+                } else throw e
+            }
         }
+        throw last ?: RuntimeException("请求失败")
     }
 
     /** GET（可指定 Accept），失败自动重试一次：移动网络链路不稳，偶发响应不完整 */
@@ -416,11 +758,13 @@ private class GitBackend(
 
     /** 纯仓库名（用户只填 name 时自动挂到自己账号下，配置里不存 owner/） */
     private val repoName get() = conf.repo.substringAfter('/').ifBlank { "ME-Data" }
-    /** owner：用户填了 owner/name 就用填的，否则用当前登录账号 */
-    private val owner get() = if (conf.repo.contains('/')) conf.repo.substringBefore('/') else conf.account
+    /** owner：用户填了 owner/name 就用填的，否则用当前对应云端的登录账号 */
+    private val owner get() = if (conf.repo.contains('/')) conf.repo.substringBefore('/')
+        else if (isGitee) conf.giteeAccount else conf.account
     private fun dataUrl(path: String) = "$api/repos/${enc(owner)}/$repoName/contents/$path"
 
     override fun ensureReady(context: Context): String {
+        ctx = context
         // 用户名：GitHub 用已缓存的 account，Gitee 每次登录后缓存到 giteeAccount
         var login = if (isGitee) conf.giteeAccount else conf.account
         if (login.isBlank()) {
@@ -470,7 +814,7 @@ private class GitBackend(
     }
 
     override fun list(): List<RemoteFile> {
-        val text = get(dataUrl("data?ref=${enc(branch)}"), "application/vnd.github+json")
+        val text = onBranch { b -> get(dataUrl("data?ref=${enc(b)}"), "application/vnd.github+json") }
         val el = JsonStore.json.parseToJsonElement(text)
         return (el as? kotlinx.serialization.json.JsonArray)?.mapNotNull { it as? JsonObject }?.map { o ->
             RemoteFile(
@@ -485,12 +829,12 @@ private class GitBackend(
         // GitHub 首选 raw 方式：响应体就是文件内容本身，不经 Base64（移动网络下更不易损坏）；
         // Gitee 的 contents 接口不支持 raw Accept（原样返回 JSON），直接走 JSON 接口 + Base64
         var text: String? = if (!isGitee) try {
-            get(dataUrl("data/${enc(name)}?ref=${enc(branch)}"), "application/vnd.github.raw")
+            onBranch { b -> get(dataUrl("data/${enc(name)}?ref=${enc(b)}"), "application/vnd.github.raw") }
         } catch (_: Exception) { null } else null
         // 兜底（Gitee 的唯一路径）：JSON 接口 + Base64 解码
         var rev: String? = null
         if (text == null) {
-            val detail = parseObj(call(dataUrl("data/${enc(name)}?ref=${enc(branch)}"), "GET", null))
+            val detail = onBranch { b -> parseObj(call(dataUrl("data/${enc(name)}?ref=${enc(b)}"), "GET", null)) }
             rev = detail["sha"]?.toString()?.trim('"')
             val content = (detail["content"] as? kotlinx.serialization.json.JsonPrimitive)
                 ?.takeIf { it.isString }?.content ?: ""
@@ -502,30 +846,43 @@ private class GitBackend(
     }
 
     override fun revOf(name: String): String? = try {
-        parseObj(call(dataUrl("data/${enc(name)}?ref=${enc(branch)}"), "GET", null))["sha"]?.toString()?.trim('"')
-    } catch (_: Exception) { null } // 不存在则新建
+        onBranch { b -> parseObj(call(dataUrl("data/${enc(name)}?ref=${enc(b)}"), "GET", null))["sha"]?.toString()?.trim('"') }
+    } catch (e: Exception) {
+        // 只有「文件确实不存在」才当作新建。401/403/限流等错误必须向上抛：
+        // 否则会被误判成「云端没有这个文件」而反复走新建接口，最终报「文件已存在」
+        if (e.message?.contains("404") == true) null else throw e
+    }
 
     override fun write(name: String, content: String, prevRev: String?): String {
-        fun body(sha: String?): String = buildJsonObject {
+        fun body(sha: String?, br: String): String = buildJsonObject {
             put("message", "ME 数据同步（Android）· ${java.time.LocalDateTime.now()}")
             put("content", Base64.getEncoder().encodeToString(content.toByteArray(Charsets.UTF_8)))
-            put("branch", branch)
+            put("branch", br)
             if (sha != null) put("sha", sha)
         }.toString()
         val path = dataUrl("data/${enc(name)}")
         // Gitee 与 GitHub 不同：PUT 是纯「更新」接口，不带 sha 一律 400 sha is missing（即使文件不存在），
         // 新建文件必须走 POST；撞上已存在（本地版本记录缺失）时取最新 sha 转更新。GitHub 的 PUT 兼容新建+更新，维持原行为
         val resp: JsonObject = if (prevRev != null || !isGitee) {
-            parseObj(call(path, "PUT", body(prevRev)))
+            onBranch { b -> parseObj(call(path, "PUT", body(prevRev, b))) }
         } else try {
-            parseObj(call(path, "POST", body(null)))
+            onBranch { b -> parseObj(call(path, "POST", body(null, b))) }
         } catch (e: RuntimeException) {
             val m = e.message.orEmpty()
-            if (!(m.contains("存在") || m.contains("exist", ignoreCase = true))) throw e
-            val fresh = revOf(name) ?: throw e
-            parseObj(call(path, "PUT", body(fresh)))
+            // Gitee 新建接口在文件已存在时可能返回 400 / 409，取最新 sha 转为更新
+            if (!(m.contains("存在") || m.contains("exist", ignoreCase = true) ||
+                    m.contains("400") || m.contains("409"))) throw e
+            val fresh = revOf(name)
+            if (fresh.isNullOrBlank()) throw e
+            onBranch { b -> parseObj(call(path, "PUT", body(fresh, b))) }
         }
-        return (resp["content"] as? JsonObject)?.get("sha")?.toString()?.trim('"') ?: ""
+        // 版本标识：优先取响应里的 content.sha，缺失时回读一次云端 sha。
+        // 绝不能返回空串——空串会让下次上传永远判定「云端较新」而卡住
+        val sha = (resp["content"] as? JsonObject)?.get("sha")?.toString()?.trim('"')
+            ?.takeIf { it.isNotBlank() }
+            ?: resp["sha"]?.toString()?.trim('"')?.takeIf { it.isNotBlank() }
+        if (!sha.isNullOrBlank()) return sha
+        return revOf(name)?.takeIf { it.isNotBlank() } ?: md5(content)
     }
 }
 
@@ -553,15 +910,25 @@ private class WebDavBackend(private val conf: SyncConfig.Conf) : CloudBackend {
     }
 
     private fun call(method: String, url: String, body: ByteArray?, contentType: String? = null): Pair<Int, String> {
-        val req = Request.Builder().url(url)
-            .header("Authorization", authHeader)
-            .header("User-Agent", "ME-PE")
-            .method(method, (body ?: ByteArray(0)).toRequestBody(contentType?.toMediaType()))
-            .build()
-        http.newCall(req).execute().use { r ->
-            val text = r.body?.string() ?: ""
-            return r.code to text
+        var last: Exception? = null
+        repeat(2) { attempt ->
+            try {
+                val req = Request.Builder().url(url)
+                    .header("Authorization", authHeader)
+                    .header("User-Agent", "ME-PE")
+                    .method(method, (body ?: ByteArray(0)).toRequestBody(contentType?.toMediaType()))
+                    .build()
+                http.newCall(req).execute().use { r ->
+                    val text = r.body?.string() ?: ""
+                    return r.code to text
+                }
+            } catch (e: Exception) {
+                // 移动网络链路不稳/超时：重试一次
+                last = e
+                if (attempt == 0) try { Thread.sleep(1000) } catch (_: InterruptedException) { }
+            }
         }
+        throw last ?: RuntimeException("请求失败")
     }
 
     override fun ensureReady(context: Context): String {
@@ -599,25 +966,28 @@ private class WebDavBackend(private val conf: SyncConfig.Conf) : CloudBackend {
         if (code == 404) return emptyList()
         if (code !in 200..299 && code != 207) throw RuntimeException(describeError(code, body))
 
-        // 解析 multistatus XML：每个 <response> 里的 <href> 与 <getcontentlength>
+        // 解析 multistatus XML：每个 <response> 里的 <href> 与 <getcontentlength>。
+        // 不同服务端返回的前缀不同（d:/D:/无前缀），统一取去掉前缀后的本地名再比对
         val out = mutableListOf<RemoteFile>()
         val parser = android.util.Xml.newPullParser()
         parser.setInput(java.io.StringReader(body))
+        val local = { n: String -> n.substringAfter(':') }
         var curHref: String? = null
         var curSize = 0L
         var event = parser.eventType
         while (event != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
             when (event) {
-                org.xmlpull.v1.XmlPullParser.START_TAG -> when (parser.name) {
+                org.xmlpull.v1.XmlPullParser.START_TAG -> when (local(parser.name ?: "")) {
                     "response" -> { curHref = null; curSize = 0L }
-                    "href" -> { parser.next(); curHref = parser.text }
-                    "getcontentlength" -> try { parser.next(); curSize = parser.text?.toLongOrNull() ?: 0L } catch (_: Exception) { }
+                    "href" -> try { curHref = parser.nextText() } catch (_: Exception) { }
+                    "getcontentlength" -> try { curSize = parser.nextText()?.trim()?.toLongOrNull() ?: 0L } catch (_: Exception) { }
                 }
-                org.xmlpull.v1.XmlPullParser.END_TAG -> if (parser.name == "response" && curHref != null) {
+                org.xmlpull.v1.XmlPullParser.END_TAG -> if (local(parser.name ?: "") == "response" && curHref != null) {
                     val href = curHref!!
                     // 跳过目录本身（以 / 结尾）与子目录，只留 .json 文件
                     if (!href.endsWith("/") && href.endsWith(".json")) {
-                        val name = URLDecoder.decode(href.substringAfterLast('/'), "UTF-8")
+                        val raw = href.substringAfterLast('/')
+                        val name = try { URLDecoder.decode(raw, "UTF-8") } catch (_: Exception) { raw }
                         out.add(RemoteFile(name, curSize, ""))
                     }
                 }

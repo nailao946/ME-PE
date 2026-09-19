@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import com.joe.mepe.data.JsonStore
+import com.joe.mepe.ui.LanguageService
 
 class MEApp : Application() {
     companion object {
@@ -18,6 +19,7 @@ class MEApp : Application() {
         super.onCreate()
         appContext = this
         JsonStore.init(this)
+        LanguageService.init(this)
 
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(

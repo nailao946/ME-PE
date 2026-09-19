@@ -100,7 +100,7 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
-/** 健康页：常驻总览 + 子页签 + 对比 + AI 分析。总览不再是一个页签，而是常驻在页签上方（可折叠） */
+/** 健康页：固定在左侧的总览入口 + 可横向滚动的子页签 + 对比与 AI 分析 */
 private val healthTabs = listOf("睡眠", "身体", "喝水", "心情", "尿酸", "锻炼", "久坐", "用药", "对比")
 
 private val healthTabIcons = listOf(
@@ -112,59 +112,81 @@ private val healthTabIcons = listOf(
 @Composable
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 fun HealthScreen(nav: (String) -> Unit) {
-    var tab by rememberSaveable { mutableStateOf(0) }
-    val maxTab = healthTabs.lastIndex
+    var page by rememberSaveable { mutableStateOf(0) }
+    val maxPage = healthTabs.size
+    val childPage = (page - 1).coerceIn(0, healthTabs.lastIndex)
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(title = "健康", icon = Icons.Filled.Favorite, subtitle = "记录与分析你的健康数据", actions = { QuickLinks(Routes.HEALTH, nav) })
-        // 总览常驻在页签上方：任何子页都能随时看到今日概览，点指标/快速记录直达对应页签
-        HealthOverview(onSwitchTab = { tab = it.coerceIn(0, maxTab) })
-        ScrollableTabRow(
-            selectedTabIndex = tab.coerceIn(0, maxTab),
-            edgePadding = 12.dp,
-            containerColor = Color.Transparent,
-            divider = {}
-        ) {
-            healthTabs.forEachIndexed { i, name ->
-                Tab(
-                    selected = tab.coerceIn(0, maxTab) == i,
-                    onClick = { tab = i },
-                    text = { Text(name, fontWeight = if (tab.coerceIn(0, maxTab) == i) FontWeight.Bold else FontWeight.Normal) },
-                    icon = {
-                        Icon(
-                            healthTabIcons[i], null,
-                            tint = if (tab.coerceIn(0, maxTab) == i) LocalIconColor.current else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(17.dp)
+        // 总览固定在左侧，右侧子页签可横向滚动；总览本身是 Pager 的第 0 页
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Tab(
+                selected = page == 0,
+                onClick = { page = 0 },
+                modifier = Modifier.width(76.dp),
+                text = { Text("总览", fontWeight = if (page == 0) FontWeight.Bold else FontWeight.Normal) },
+                icon = {
+                    Icon(
+                        Icons.Filled.Favorite, null,
+                        tint = if (page == 0) LocalIconColor.current else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            )
+            Box(Modifier.weight(1f)) {
+                ScrollableTabRow(
+                    selectedTabIndex = childPage,
+                    edgePadding = 0.dp,
+                    containerColor = Color.Transparent,
+                    indicator = {},
+                    divider = {}
+                ) {
+                    healthTabs.forEachIndexed { i, name ->
+                        val selected = page == i + 1
+                        Tab(
+                            selected = selected,
+                            onClick = { page = i + 1 },
+                            text = { Text(name, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal) },
+                            icon = {
+                                Icon(
+                                    healthTabIcons[i], null,
+                                    tint = if (selected) LocalIconColor.current else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
                         )
                     }
-                )
+                }
             }
         }
 
         // 横向滑动切换 tab：左右滑与顶部标签联动，各页面状态独立保留
-        val pagerState = rememberPagerState(initialPage = tab.coerceIn(0, maxTab)) { healthTabs.size }
-        // 只在翻页「停稳」后把页码同步回 tab：翻页动画中途的 currentPage 一旦同步回 tab，
-        // 会触发对中间页的滚动把目标页打断 —— 表现为「点第 N 个落在第 N-1 个」（快速记录与顶部标签都受影响）
+        val pagerState = rememberPagerState(initialPage = page.coerceIn(0, maxPage)) { healthTabs.size + 1 }
+        // 只在翻页「停稳」后把页码同步回 tab，避免动画中途把目标页打断
         LaunchedEffect(pagerState) {
             snapshotFlow { pagerState.currentPage to pagerState.isScrollInProgress }
-                .collect { (page, scrolling) -> if (!scrolling) tab = page }
+                .collect { (current, scrolling) -> if (!scrolling) page = current }
         }
-        LaunchedEffect(tab) {
-            val t = tab.coerceIn(0, maxTab)
-            if (pagerState.currentPage != t) pagerState.animateScrollToPage(t)
+        LaunchedEffect(page) {
+            val target = page.coerceIn(0, maxPage)
+            if (pagerState.currentPage != target) pagerState.animateScrollToPage(target)
         }
-        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { t ->
+        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { currentPage ->
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                when (t) {
-                    0 -> SleepTab()
-                    1 -> BodyTab()
-                    2 -> WaterTab()
-                    3 -> MoodTab()
-                    4 -> UricTab()
-                    5 -> ExerciseTab()
-                    6 -> SedentaryTab()
-                    7 -> MedicationTab()
-                    else -> CompareTab()
+                if (currentPage == 0) {
+                    HealthOverview(onSwitchTab = { page = it.coerceIn(0, healthTabs.lastIndex) + 1 })
+                } else {
+                    when (currentPage - 1) {
+                        0 -> SleepTab()
+                        1 -> BodyTab()
+                        2 -> WaterTab()
+                        3 -> MoodTab()
+                        4 -> UricTab()
+                        5 -> ExerciseTab()
+                        6 -> SedentaryTab()
+                        7 -> MedicationTab()
+                        else -> CompareTab()
+                    }
                 }
                 Spacer(Modifier.height(28.dp))
             }

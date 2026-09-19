@@ -12,8 +12,8 @@ android {
         applicationId = "com.joe.mepe"
         minSdk = 26
         targetSdk = 34
-        versionCode = 47
-        versionName = "2.4.41"
+        versionCode = 53
+        versionName = "2.4.47"
     }
 
     buildTypes {
@@ -63,4 +63,19 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+}
+
+// Keep a versioned debug APK in the project root for each completed Android build.
+tasks.register("copyDebugApkToMePe") {
+    dependsOn("packageDebug")
+    doNotTrackState("The project root contains files managed outside Gradle")
+    doLast {
+        val source = layout.buildDirectory.file("outputs/apk/debug/app-debug.apk").get().asFile
+        val target = rootProject.file("ME-PE-v${android.defaultConfig.versionName}-debug.apk")
+        source.copyTo(target, overwrite = true)
+    }
+}
+
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+    finalizedBy("copyDebugApkToMePe")
 }

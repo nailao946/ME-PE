@@ -1,6 +1,9 @@
 package com.joe.mepe.ui.theme
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
@@ -10,6 +13,8 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -107,6 +112,84 @@ private fun darkScheme(accent: Color) = darkColorScheme(
     scrim = Color(0xFF000000),
 )
 
+/**
+ * 毛玻璃（玻璃拟态）配色：半透明卡片浮在渐变背景上，卡片与描边都带透明度。
+ * accent 只影响主色，surface 用半透明白/黑，让底部的渐变透出来形成磨砂质感。
+ */
+private fun glassLightScheme(accent: Color) = lightColorScheme(
+    primary = accent,
+    onPrimary = Color.White,
+    primaryContainer = accent.copy(alpha = 0.22f),
+    onPrimaryContainer = accent.darken(0.45f),
+    inversePrimary = accent.lighten(0.3f),
+    secondary = accent.darken(0.15f),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0x59FFFFFF),
+    onSecondaryContainer = accent.darken(0.4f),
+    tertiary = accent.copy(blue = accent.blue * 0.7f + 0.2f),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0x40FFFFFF),
+    onTertiaryContainer = accent.darken(0.35f),
+    background = Color(0xFFEEF2FF),
+    onBackground = Color(0xFF1B1D25),
+    surface = Color(0xB8FFFFFF),
+    onSurface = Color(0xFF1B1D25),
+    surfaceVariant = Color(0x80FFFFFF),
+    onSurfaceVariant = Color(0xFF5B5F6E),
+    surfaceTint = accent,
+    inverseSurface = Color(0xB82C2E38),
+    inverseOnSurface = Color(0xFFF2F2F7),
+    error = Color(0xFFDC3644),
+    onError = Color.White,
+    errorContainer = Color(0x80FFE2E4),
+    onErrorContainer = Color(0xFF93121F),
+    outline = Color(0x8CB9C6E8),
+    outlineVariant = Color(0x66B9C6E8),
+    scrim = Color(0x99000000),
+)
+
+private fun glassDarkScheme(accent: Color) = darkColorScheme(
+    primary = accent.lighten(0.22f),
+    onPrimary = Color(0xFF0F1220),
+    primaryContainer = accent.copy(alpha = 0.34f),
+    onPrimaryContainer = accent.lighten(0.55f),
+    inversePrimary = accent.darken(0.1f),
+    secondary = accent.lighten(0.12f),
+    onSecondary = Color(0xFF0F1220),
+    secondaryContainer = Color(0x593A4159),
+    onSecondaryContainer = accent.lighten(0.45f),
+    tertiary = accent.copy(blue = accent.blue * 0.7f + 0.2f).lighten(0.1f),
+    onTertiary = Color(0xFF0F1220),
+    tertiaryContainer = Color(0x403A4159),
+    onTertiaryContainer = accent.lighten(0.4f),
+    background = Color(0xFF141726),
+    onBackground = Color(0xFFE4E6ED),
+    surface = Color(0x8C222A3D),
+    onSurface = Color(0xFFE4E6ED),
+    surfaceVariant = Color(0x59333C56),
+    onSurfaceVariant = Color(0xFFC3C7D6),
+    surfaceTint = accent,
+    inverseSurface = Color(0xB8E4E6ED),
+    inverseOnSurface = Color(0xFF1B1D24),
+    error = Color(0xFFFF6B7A),
+    onError = Color(0xFF37060D),
+    errorContainer = Color(0x805C1120),
+    onErrorContainer = Color(0xFFFFD9DC),
+    outline = Color(0x8C6C7595),
+    outlineVariant = Color(0x665059),
+    scrim = Color(0x99000000),
+)
+
+/** 毛玻璃主题的背景渐变（跟随深浅色与强调色） */
+private fun glassBrush(dark: Boolean, accent: Color): Brush {
+    val top = if (dark) Color(0xFF171A2B) else Color(0xFFEEF2FF)
+    val mid = if (dark) Color(0xFF1D2136) else Color(0xFFE3ECFB)
+    val end = if (dark) Color(0xFF241D33) else Color(0xFFF5E9FB)
+    return androidx.compose.ui.graphics.Brush.verticalGradient(
+        listOf(top, mid.copy(green = (mid.green + accent.green) / 2), end)
+    )
+}
+
 private fun Color.darken(f: Float) = Color(
     red = red * (1 - f), green = green * (1 - f), blue = blue * (1 - f), alpha = alpha
 )
@@ -145,18 +228,24 @@ fun resolveAccent(accentName: String): Color {
 
 @Composable
 fun METheme(
-    themeMode: String, // light / dark / system
+    themeMode: String, // light / dark / glass / system
     accentName: String,
     iconColorHex: String = "auto",
     content: @Composable () -> Unit
 ) {
     val accent = resolveAccent(accentName)
+    val glass = themeMode == "glass"
     val dark = when (themeMode) {
         "light" -> false
         "dark" -> true
         else -> isSystemInDarkTheme()
     }
-    val scheme = if (dark) darkScheme(accent) else lightScheme(accent)
+    val scheme = when {
+        glass && dark -> glassDarkScheme(accent)
+        glass -> glassLightScheme(accent)
+        dark -> darkScheme(accent)
+        else -> lightScheme(accent)
+    }
     val iconColor = if (iconColorHex == "auto" || iconColorHex.isBlank())
         scheme.primary
     else parseHexColor(iconColorHex, scheme.primary)
@@ -166,7 +255,16 @@ fun METheme(
         typography = appTypography(),
         shapes = appShapes,
     ) {
-        CompositionLocalProvider(LocalIconColor provides iconColor, content = content)
+        CompositionLocalProvider(LocalIconColor provides iconColor) {
+            if (glass) {
+                // 毛玻璃：整屏铺一层渐变底，半透明卡片浮在其上
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(glassBrush(dark, accent))
+                ) { content() }
+            } else content()
+        }
     }
 }
 

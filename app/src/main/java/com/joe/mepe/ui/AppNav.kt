@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Map
@@ -37,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -65,25 +67,21 @@ object Routes {
     val mainTabs = listOf(TASKS, GOALS, CALENDAR, TIME, HEALTH)
 }
 
-private data class TabItem(
-    val route: String,
-    val label: String,
-    val icon: ImageVector,
-    val activeIcon: ImageVector,
-)
+private data class TabSpec(val route: String, val labelRes: Int, val icon: ImageVector, val activeIcon: ImageVector)
 
 private val tabs = listOf(
-    TabItem(Routes.TASKS, "任务", Icons.Outlined.Checklist, Icons.Filled.Checklist),
-    TabItem(Routes.GOALS, "目标", Icons.Outlined.Flag, Icons.Filled.Flag),
-    TabItem(Routes.CALENDAR, "日历", Icons.Outlined.CalendarMonth, Icons.Filled.CalendarMonth),
-    TabItem(Routes.TIME, "时间", Icons.Outlined.Timer, Icons.Filled.Timer),
-    TabItem(Routes.HEALTH, "健康", Icons.Outlined.FavoriteBorder, Icons.Filled.Favorite),
+    TabSpec(Routes.TASKS, com.joe.mepe.R.string.nav_tasks, Icons.Outlined.Checklist, Icons.Filled.Checklist),
+    TabSpec(Routes.GOALS, com.joe.mepe.R.string.nav_goals, Icons.Outlined.Flag, Icons.Filled.Flag),
+    TabSpec(Routes.CALENDAR, com.joe.mepe.R.string.nav_calendar, Icons.Outlined.CalendarMonth, Icons.Filled.CalendarMonth),
+    TabSpec(Routes.TIME, com.joe.mepe.R.string.nav_time, Icons.Outlined.Timer, Icons.Filled.Timer),
+    TabSpec(Routes.HEALTH, com.joe.mepe.R.string.nav_health, Icons.Outlined.FavoriteBorder, Icons.Filled.Favorite),
 )
 
-/** 主页右上角快速入口（地图 / 盘点 / 设置），单色图标 */
+/** 主页右上角快速入口（模块 / 地图 / 盘点 / 设置），单色图标 */
 @Composable
 fun QuickLinks(current: String, nav: (String) -> Unit) {
     val links = listOf(
+        Icons.Filled.Extension to Routes.MODULES,
         Icons.Filled.Map to Routes.MAP,
         Icons.Filled.RateReview to Routes.REVIEW,
         Icons.Filled.Settings to Routes.SETTINGS,
@@ -103,7 +101,7 @@ fun QuickLinks(current: String, nav: (String) -> Unit) {
 }
 
 @Composable
-fun AppRoot() {
+fun AppRoot(onLanguageChanged: (String) -> Unit = {}) {
     var route by rememberSaveable { mutableStateOf(Routes.TASKS) }
     var mainTab by rememberSaveable { mutableStateOf(Routes.TASKS) }
     // 覆盖页返回栈：主 Tab → 设置 → 管理模块 这类多级进入时，系统返回逐级原路退回
@@ -148,7 +146,9 @@ fun AppRoot() {
                     containerColor = MaterialTheme.colorScheme.surface,
                     tonalElevation = 2.dp
                 ) {
+                    val context = LocalLanguageContext.current
                     tabs.forEach { tab ->
+                        val label = context.getString(tab.labelRes)
                         val selected = route == tab.route
                         NavigationBarItem(
                             selected = selected,
@@ -156,14 +156,14 @@ fun AppRoot() {
                             icon = {
                                 Icon(
                                     if (selected) tab.activeIcon else tab.icon,
-                                    contentDescription = tab.label,
+                                    contentDescription = label,
                                     tint = if (selected) LocalIconColor.current
                                     else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             },
                             label = {
                                 Text(
-                                    tab.label,
+                                    label,
                                     fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.SemiBold
                                     else androidx.compose.ui.text.font.FontWeight.Normal
                                 )
@@ -197,7 +197,7 @@ fun AppRoot() {
                     Routes.HEALTH -> HealthScreen(nav)
                     Routes.MAP -> MapScreen(nav)
                     Routes.REVIEW -> ReviewScreen(nav)
-                    Routes.SETTINGS -> SettingsScreen(nav)
+                    Routes.SETTINGS -> SettingsScreen(nav, onLanguageChanged)
                     Routes.MODULES -> com.joe.mepe.ui.modules.ModulesScreen(nav)
                 }
             }

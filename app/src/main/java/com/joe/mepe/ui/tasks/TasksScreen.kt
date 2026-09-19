@@ -163,14 +163,9 @@ fun TasksScreen(nav: (String) -> Unit) {
                     else -> Offset.Zero
                 }
             }
-            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-                // 一帧内滚动越过顶部的剩余下拉量
-                if (available.y > 0 && !listState.canScrollBackward) {
-                    pullOffset = (pullOffset + available.y).coerceAtMost(maxPull)
-                    return Offset(0f, available.y)
-                }
-                return Offset.Zero
-            }
+            // Do not consume onPostScroll as well: onPreScroll owns the top pull gesture,
+            // avoiding double consumption that makes the list feel stuck.
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset = Offset.Zero
             override suspend fun onPreFling(velocity: Velocity): Velocity {
                 val pulled = pullOffset
                 pullOffset = 0f   // 无论是否触发同步，松手都弹回
@@ -374,9 +369,19 @@ fun TasksScreen(nav: (String) -> Unit) {
             }
         }
 
-        // 任务分区
+        // 今日目标：与桌面端 TasksView 的「今日目标」同口径——只展示选中日期存在的任务，
+        // 量化任务须设置了每日目标；历史完成项（完成日早于选中日）不再出现
+        TodayGoalsCard(goals = goals, tasks = allTasks, tags = tags, date = selectedDate, completions = completions)
+
+        // 任务分区：进行中 → 今日已完成 → 过去完成（完成日早于选中日且永久完成的任务）
         val visible = allTasks
-            .filter { TaskLogic.occursOnDate(it, selectedDate) }
+            .filter {
+                TaskLogic.occursOnDate(it, selectedDate) ||
+                    TaskLogic.completedOn(it) != null ||
+                    (it.type == TaskTypes.QUANTITATIVE && it.quantitativeTarget != null &&
+                        it.quantitativeTarget!! > 0 &&
+                        (it.quantitativeCurrent ?: 0.0) >= it.quantitativeTarget!!)
+            }
             .filter { t ->
                 if (selectedTagId == null) true
                 else t.goalId?.let { gid -> goals.find { g -> g.id == gid }?.tagId == selectedTagId } ?: false
@@ -385,8 +390,10 @@ fun TasksScreen(nav: (String) -> Unit) {
             // 与桌面端同序：优先级降序，再按 sortOrder（拖动排序两端互通）
             .sortedWith(compareByDescending<TaskItem> { it.priority }.thenBy { it.sortOrder })
 
-        val activeTasks = visible.filter { !TaskLogic.isDoneOn(it, selectedDate, completions) }
-        val doneTasks = visible.filter { TaskLogic.isDoneOn(it, selectedDate, completions) }
+        val pastDoneTasks = visible.filter { TaskLogic.completedOn(it)?.isBefore(selectedDate) == true }
+        val restTasks = visible.filter { TaskLogic.completedOn(it)?.isBefore(selectedDate) != true }
+        val activeTasks = restTasks.filter { !TaskLogic.isDoneOn(it, selectedDate, completions) }
+        val doneTasks = restTasks.filter { TaskLogic.isDoneOn(it, selectedDate, completions) }
         groupOrderIds["active"] = activeTasks.map { it.id }
         groupOrderIds["done"] = doneTasks.map { it.id }
 
@@ -401,12 +408,13 @@ fun TasksScreen(nav: (String) -> Unit) {
         }
         val activeRows = rowsFor(activeTasks)
         val doneRows = rowsFor(doneTasks)
+        val pastDoneRows = rowsFor(pastDoneTasks)
 
         // 下拉刷新：列表在顶部继续下拉，内容整体下滑露出空白，松手弹回（不再显示转圈指示器）
         Box(Modifier.weight(1f).nestedScroll(pullConnection)) {
         LazyColumn(Modifier.fillMaxSize().graphicsLayer { translationY = pullDisplay }, state = listState) {
             item(key = "head_empty") {
-                if (activeTasks.isEmpty() && doneTasks.isEmpty()) EmptyHint("此日期没有任务", Icons.Filled.Checklist)
+                if (activeTasks.isEmpty() && doneTasks.isEmpty() && pastDoneTasks.isEmpty()) EmptyHint("此日期没有任务", Icons.Filled.Checklist)
             }
             if (activeRows.isNotEmpty()) {
                 item(key = "sec_active") { SectionLabel("进行中 (${activeTasks.size})") }
@@ -429,12 +437,34 @@ fun TasksScreen(nav: (String) -> Unit) {
                 }
             }
             if (doneRows.isNotEmpty()) {
-                item(key = "sec_done") { SectionLabel("今日已完成 (${doneTasks.size})") }
+                item(key = "sec_done") {
+                    SectionLabel(if (selectedDate == LocalDate.now()) "今日已完成 (${doneTasks.size})" else "已完成 (${doneTasks.size})")
+                }
                 items(doneRows, key = { it.key }) { row ->
                     TaskRowItem(
                         row = row, date = selectedDate,
                         completions = completions, goals = goals, tags = tags, timeTags = timeTags,
                         group = "done", isDone = true,
+                        draggingKey = draggingKey, dragOffset = dragOffset, dropTargetKey = dropTargetKey,
+                        onStartDrag = {
+                            draggingKey = it; dragOffset = 0f
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        },
+                        onDrag = { dy -> dragOffset += dy; processDrag() },
+                        onEndDrag = { finishDrag() },
+                        onEdit = { editingTask = it }, onDelete = { deleteTarget = it },
+                        onOpen = { detailTaskId = it.id },
+                        onRegister = { k, g, id -> rowGroups[k] = g to id },
+                    )
+                }
+            }
+            if (pastDoneRows.isNotEmpty()) {
+                item(key = "sec_past_done") { SectionLabel("过去完成 (${pastDoneTasks.size})") }
+                items(pastDoneRows, key = { it.key }) { row ->
+                    TaskRowItem(
+                        row = row, date = selectedDate,
+                        completions = completions, goals = goals, tags = tags, timeTags = timeTags,
+                        group = "past_done", isDone = true,
                         draggingKey = draggingKey, dragOffset = dragOffset, dropTargetKey = dropTargetKey,
                         onStartDrag = {
                             draggingKey = it; dragOffset = 0f
@@ -503,6 +533,114 @@ fun TasksScreen(nav: (String) -> Unit) {
     }
 }
 
+/**
+ * 「今日目标」卡片：按目标分组列出当日应做的任务（与桌面端 TasksView 的「今日目标」同口径）。
+ * 只统计该日期存在的任务；量化任务须设置了每日目标；完成日早于该日期的永久完成项不再出现。
+ */
+@Composable
+private fun TodayGoalsCard(
+    goals: List<Goal>,
+    tasks: List<TaskItem>,
+    tags: List<GoalTag>,
+    date: LocalDate,
+    completions: List<com.joe.mepe.data.TaskCompletionRecord>,
+) {
+    fun occursForGoals(t: TaskItem, d: LocalDate): Boolean {
+        if (t.isDeleted || t.parentTaskId != null) return false
+        val isCycle = t.type == TaskTypes.RECURRING ||
+            (t.type == TaskTypes.QUANTITATIVE && t.recurringPattern != null)
+        if (t.type == TaskTypes.QUANTITATIVE) {
+            if ((t.quantitativeDailyMin ?: 0.0) <= 0.0) return false
+            val target = t.quantitativeTarget
+            if (target != null && target > 0 && (t.quantitativeCurrent ?: 0.0) >= target) {
+                val doneDay = t.completedAt?.toLocalDate() ?: return false
+                if (doneDay.isBefore(d)) return false
+            }
+        }
+        // 非循环类的永久完成项：只在完成当日出现，历史完成项不再出现
+        if (!isCycle && t.isCompleted) {
+            val cd = TaskLogic.completedOn(t) ?: t.startDate?.toLocalDate() ?: t.createdAt.toLocalDate()
+            if (cd != d) return false
+        }
+        if (isCycle) return TaskLogic.occursOnDate(t, d)
+        val start = t.startDate?.toLocalDate()
+        val end = t.endDate?.toLocalDate()
+        return when {
+            start != null && end != null -> !d.isBefore(start) && !d.isAfter(end)
+            start != null -> start == d
+            t.type == TaskTypes.QUANTITATIVE -> !d.isBefore(t.createdAt.toLocalDate())
+            else -> d == t.createdAt.toLocalDate()
+        }
+    }
+
+    val active = goals.filter { g ->
+        !g.isDeleted && !g.isArchived && g.parentId == null &&
+            run {
+                val s = g.startDate?.toLocalDate()
+                val e = g.endDate?.toLocalDate()
+                when {
+                    s != null && e != null -> !date.isBefore(s) && !date.isAfter(e)
+                    s != null -> s == date
+                    else -> true
+                }
+            }
+    }
+    if (active.isEmpty()) return
+
+    Card(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Text(
+                if (date == LocalDate.now()) "今日目标" else "${date.monthValue}月${date.dayOfMonth}日目标",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(6.dp))
+            active.forEach { g ->
+                val dot = g.tagId?.let { tid -> tags.find { it.id == tid }?.color }
+                val gTasks = tasks.filter { it.goalId == g.id && occursForGoals(it, date) }
+                if (gTasks.isEmpty()) return@forEach
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    com.joe.mepe.ui.ColorDot(
+                        dot?.let { com.joe.mepe.ui.theme.parseHexColor(it, MaterialTheme.colorScheme.primary) }
+                            ?: MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(g.name, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface)
+                }
+                gTasks.forEach { t ->
+                    val done = TaskLogic.isDoneOn(t, date, completions)
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 14.dp, top = 2.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            if (done) "✓ " else "○ ",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            t.title,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                            textDecoration = if (done) TextDecoration.LineThrough else null,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 /** 拍平的任务行：主任务与子任务都是独立列表项（子任务才能拥有自己的拖动定位与落点） */
 private sealed class TaskRow {
     abstract val key: String
@@ -567,7 +705,8 @@ private fun TaskRowItem(
                 TaskCard(
                     task, date, completions, goals, tags, timeTags,
                     subtasks = (row as? TaskRow.Main)?.subs ?: emptyList(),
-                    onOpen = onOpen, draggable = true
+                    onOpen = onOpen, draggable = true,
+                    showCompletedDate = group == "past_done"
                 )
             }
         }
@@ -671,8 +810,10 @@ private fun TaskCard(
     subtasks: List<TaskItem>,
     onOpen: (TaskItem) -> Unit,
     draggable: Boolean = false,
+    showCompletedDate: Boolean = false,
 ) {
-    val done = TaskLogic.isDoneOn(task, date, completions)
+    val done = if (showCompletedDate) true else TaskLogic.isDoneOn(task, date, completions)
+    val completedDate = if (showCompletedDate) TaskLogic.completedOn(task) else null
     val goal = task.goalId?.let { gid -> goals.find { it.id == gid } }
     val tagColor = goal?.tagId?.let { tid -> tags.find { t -> t.id == tid }?.color }
     // 关联的时间标签：卡片颜色风格（边框/色条/小字/进度条/完成圈）全部跟随标签
@@ -701,7 +842,7 @@ private fun TaskCard(
                 Box(Modifier.width(4.dp).height(34.dp).background(accent, RoundedCornerShape(2.dp)))
                 Spacer(Modifier.width(9.dp))
             }
-            // 打卡圈（完成入口；量化任务点击=进度+步长）
+            // 打卡圈（完成入口；量化任务点击=进度+步长；已永久完成的一次性任务不再可点）
             Box(
                 Modifier.size(26.dp)
                     .border(
@@ -711,7 +852,7 @@ private fun TaskCard(
                         CircleShape
                     )
                     .background(if (done) doneColor else Color.Transparent, CircleShape)
-                    .clickable {
+                    .clickable(enabled = !showCompletedDate) {
                         if (task.type == TaskTypes.QUANTITATIVE) {
                             TaskLogic.adjustQuantitative(task, TaskLogic.quantStep(task))
                             DataBus.bump()
@@ -735,6 +876,12 @@ private fun TaskCard(
                         color = if (done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
                     )
                 }
+                if (completedDate != null)
+                    Text(
+                        "完成于 ${completedDate}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 val need = task.recurringTimesPerDay ?: 0
                 val meta = buildString {
                     if (timeTag != null) append("⏱ ${timeTag.name} · ")
@@ -850,6 +997,19 @@ private fun TaskDetailSheet(
                 if (timeTag != null) add("时间标签：${timeTag.name}")
                 if (task.type != TaskTypes.ONE_TIME) add(TaskLogic.patternName(task))
                 task.endDate?.let { add("截止：${it.toLocalDate()}") }
+                // 量化每日目标口径：今日还需比上一日最终值多 N
+                if (task.type == TaskTypes.QUANTITATIVE && (task.quantitativeDailyMin ?: 0.0) > 0.0) {
+                    val today = LocalDate.now()
+                    val cur = task.quantitativeCurrent ?: 0.0
+                    val base = task.quantSnapValue
+                        ?.takeIf { task.quantSnapDate?.toLocalDate() == today }
+                        ?: cur
+                    val remain = (task.quantitativeDailyMin!! - (cur - base)).coerceAtLeast(0.0)
+                    add(
+                        if (remain <= 0.0) "今日已达每日目标 +${fmtNum(task.quantitativeDailyMin!!)}"
+                        else "今日还需 +${fmtNum(remain)}（每日目标 ${fmtNum(task.quantitativeDailyMin!!)}）"
+                    )
+                }
             }
             metaLines.forEach { line ->
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {

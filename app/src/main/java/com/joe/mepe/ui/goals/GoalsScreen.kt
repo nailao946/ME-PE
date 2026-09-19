@@ -177,11 +177,20 @@ fun GoalsScreen(nav: (String) -> Unit) {
     var showTagManager by remember { mutableStateOf(false) }
 
     val rev = DataBus.rev
+    val today = LocalDate.now()
     val data = remember(selectedTagId, rev) {
-        GoalsData(Repos.goals(), Repos.tags(), Repos.tasks(), Repos.timeTags())
+        val allGoals = Repos.goals()
+        val allTasks = Repos.tasks()
+        var changed = false
+        allGoals.forEach { g ->
+            val before = g.goalCompletedAt
+            TaskLogic.refreshGoalCompletion(g, allTasks, today)
+            if (before != g.goalCompletedAt) changed = true
+        }
+        if (changed) Repos.saveGoals(allGoals)
+        GoalsData(allGoals, Repos.tags(), allTasks, Repos.timeTags())
     }
     val (goals, tags, tasks, timeTags) = data
-    val today = LocalDate.now()
 
     // ---- 长按拖动排序状态（同时间框架内的顶级目标） ----
     val listState = rememberLazyListState()
@@ -257,10 +266,13 @@ fun GoalsScreen(nav: (String) -> Unit) {
         )
 
         // 顶部统计
+        val completionsNow = Repos.completions()
+        val todayDueCount = tasks.count { t -> t.parentTaskId == null && TaskLogic.occursOnDate(t, today) }
+        val todayDoneCount = tasks.count { t -> t.parentTaskId == null && TaskLogic.occursOnDate(t, today) && TaskLogic.isDoneOn(t, today, completionsNow) }
         StatRow(listOf(
             Triple("个目标", "${goals.count { !it.isArchived }}", null),
             Triple("平均进度", "${if (goals.isNotEmpty()) (goals.map { TaskLogic.goalProgress(it, tasks, today) }.average() * 100).toInt() else 0}%", null),
-            Triple("今日完成任务", "${tasks.count { TaskLogic.isDoneOn(it, today, Repos.completions()) }}", null),
+            Triple("今日完成任务", "$todayDoneCount/$todayDueCount", null),
         ))
 
         // 标签过滤
@@ -274,51 +286,55 @@ fun GoalsScreen(nav: (String) -> Unit) {
         }
 
         val visible = goals.filter { g ->
-            g.parentId == null && (selectedTagId == null || g.tagId == selectedTagId)
-        }
-        // 与桌面端同序：sortOrder 升序，创建时间新的在前
-            .sortedWith(compareBy<com.joe.mepe.data.Goal> { it.sortOrder }.thenByDescending { it.createdAt })
+            !g.isDeleted && !g.isArchived && g.parentId == null &&
+                (selectedTagId == null || g.tagId == selectedTagId)
+        }.sortedWith(compareBy<Goal> { it.sortOrder }.thenByDescending { it.createdAt })
+        val goalGroups = listOf(
+            "进行中" to visible.filter { it.goalCompletedAt == null },
+            "今日已完成" to visible.filter { it.goalCompletedAt?.toLocalDate() == today },
+            "过去完成" to visible.filter { it.goalCompletedAt?.toLocalDate()?.isBefore(today) == true }
+        )
 
         LazyColumn(Modifier.fillMaxSize(), state = listState) {
-            if (visible.isEmpty()) {
-                item { EmptyHint("还没有目标，点右下角新建", Icons.Filled.Flag) }
-            }
-            (TimeFrames.SHORT..TimeFrames.INSPIRATION).forEach { frame ->
-                val inFrame = visible.filter { it.timeFrame == frame }
-                if (inFrame.isNotEmpty()) {
-                    item(key = "f$frame") {
+            if (visible.isEmpty()) item { EmptyHint("还没有目标，点右下角新建", Icons.Filled.Flag) }
+            goalGroups.forEach { (groupName, groupedGoals) ->
+                if (groupedGoals.isNotEmpty()) {
+                    item(key = "group-$groupName") {
                         Text(
-                            frameNames[frame],
+                            "$groupName (${groupedGoals.size})",
                             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (groupName == "今日已完成") MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    items(inFrame, key = { "g${it.id}" }) { g ->
-                        goalRowGroups["g${g.id}"] = frame to g.id
-                        DragLift(
-                            itemKey = "g${g.id}",
-                            draggingKey = draggingGoalKey, dragOffset = goalDragOffset, dropTargetKey = goalDropTargetKey,
-                            onStartDrag = {
-                                draggingGoalKey = it; goalDragOffset = 0f
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            },
-                            onDrag = { dy -> goalDragOffset += dy; processGoalDrag() },
-                            onEndDrag = { finishGoalDrag() },
-                        ) {
-                            GoalNode(
-                                goal = g, goals = goals, tags = tags, tasks = tasks, timeTags = timeTags, today = today,
-                                depth = 0, expandedIds = expandedIds,
-                                onToggleExpand = { id ->
-                                    expandedIds = if (id in expandedIds) expandedIds - id else expandedIds + id
-                                },
-                                onShowDetail = { detailGoal = it },
-                                onEdit = { editing = it },
-                                onDelete = { deleteTarget = it },
-                                onAddSub = { editingParentForSub = it },
-                                onQuant = { quantGoal = it },
-                            )
+                    (TimeFrames.SHORT..TimeFrames.INSPIRATION).forEach { frame ->
+                        val inFrame = groupedGoals.filter { it.timeFrame == frame }
+                        if (inFrame.isNotEmpty()) {
+                            item(key = "$groupName-f$frame") {
+                                Text(frameNames[frame], Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            items(inFrame, key = { "$groupName-g${it.id}" }) { g ->
+                                goalRowGroups["g${g.id}"] = frame to g.id
+                                DragLift(
+                                    itemKey = "g${g.id}", draggingKey = draggingGoalKey, dragOffset = goalDragOffset,
+                                    dropTargetKey = goalDropTargetKey,
+                                    onStartDrag = { draggingGoalKey = it; goalDragOffset = 0f; haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
+                                    onDrag = { dy -> goalDragOffset += dy; processGoalDrag() },
+                                    onEndDrag = { finishGoalDrag() },
+                                ) {
+                                    GoalNode(
+                                        goal = g, goals = goals, tags = tags, tasks = tasks, timeTags = timeTags, today = today,
+                                        depth = 0, expandedIds = expandedIds,
+                                        onToggleExpand = { id -> expandedIds = if (id in expandedIds) expandedIds - id else expandedIds + id },
+                                        onShowDetail = { detailGoal = it }, onEdit = { editing = it },
+                                        onDelete = { deleteTarget = it }, onAddSub = { editingParentForSub = it },
+                                        onQuant = { quantGoal = it }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -465,6 +481,13 @@ private fun GoalNode(
                             style = MaterialTheme.typography.bodySmall,
                             color = color
                         )
+                        goal.goalCompletedAt?.let { completedAt ->
+                            Text(
+                                "完成于 ${completedAt.toLocalDate()}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                     if (children.isNotEmpty()) {
                         Icon(

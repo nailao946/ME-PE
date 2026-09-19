@@ -1,4 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ME</string>
+    <string name="widget_title">今日任务</string>
+    <string name="widget_description">在桌面查看今天要做的任务和完成进度</string>
+    <string name="nav_tasks">任务</string>
+    <string name="nav_goals">目标</string>
+    <string name="nav_calendar">日历</string>
+    <string name="nav_time">时间</string>
+    <string name="nav_health">健康</string>
+    <string name="language_title">语言</string>
+    <string name="language_subtitle">选择应用显示语言</string>
+    <string name="language_system">跟随系统</string>
+    <string name="language_zh">中文</string>
+    <string name="language_en">English</string>
 </resources>

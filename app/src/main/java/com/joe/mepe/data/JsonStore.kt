@@ -14,6 +14,10 @@ object JsonStore {
     lateinit var dir: File
         private set
 
+    /** 应用级 Context，供小组件刷新等无 Compose 场景使用 */
+    var appContext: Context? = null
+        private set
+
     val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -21,6 +25,7 @@ object JsonStore {
     }
 
     fun init(context: Context) {
+        appContext = context.applicationContext
         dir = File(context.filesDir, "JsonData")
         if (!dir.exists()) dir.mkdirs()
     }
@@ -49,10 +54,16 @@ object JsonStore {
     fun allFiles(): List<File> = dir.listFiles { f -> f.extension == "json" }?.sortedBy { it.name } ?: emptyList()
 }
 
-/** 全局数据版本号：仓库每次写入后 +1，UI 通过读取它触发刷新 */
+/** 全局数据版本号：仓库每次写入后 +1，UI 通过读取它触发刷新；同时刷新桌面小组件 */
 object DataBus {
     var rev: Int by androidx.compose.runtime.mutableStateOf(0)
         private set
 
-    fun bump() { rev++ }
+    fun bump() {
+        rev++
+        // 桌面小组件跟随数据变化刷新（无小组件时静默跳过）
+        JsonStore.appContext?.let { ctx ->
+            try { com.joe.mepe.widget.TodayWidgetProvider.updateAll(ctx) } catch (_: Exception) { }
+        }
+    }
 }

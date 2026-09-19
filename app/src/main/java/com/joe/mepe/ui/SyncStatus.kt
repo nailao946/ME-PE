@@ -24,7 +24,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.joe.mepe.data.CloudSync
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -37,6 +40,8 @@ object SyncStatusBus {
 
     var state by mutableStateOf(State.IDLE)
     var message by mutableStateOf("")
+    private var autoJob: Job? = null
+    private val autoScope = CoroutineScope(Dispatchers.Default)
 
     fun setRunning(msg: String = "正在同步…") {
         state = State.RUNNING
@@ -48,29 +53,42 @@ object SyncStatusBus {
         message = result
         state = if (result.startsWith("✓")) State.SUCCESS else State.FAILED
     }
+
+    /** 应用进入前台时调用；只在用户开启自动同步且短时间内没有重复调度时执行。 */
+    fun scheduleAutoSync(context: Context) {
+        if (!CloudSync.isAutoSyncEnabled(context)) return
+        autoJob?.cancel()
+        autoJob = autoScope.launch {
+            delay(350)
+            if (state != State.RUNNING) runFullSync(context, toast = false)
+        }
+    }
 }
 
+
 /**
- * 一次完整同步 = 先上传（防覆盖：云端较新的文件自动跳过）再下载（把云端较新的拉下来）。
- * 返回汇总消息（✓ 开头表示整体成功）；toast=true 时轻提示结果——Toast 不打断界面，
- * 同步过程由状态球呼吸显示。
+ * 一次完整同步 = 先上传（推送所有已配置云端，追加型文件冲突自动合并）再下载（从所有云端拉取并合并）。
+ * 返回汇总消息，逐云端列出成功/失败与原因（✓ 开头表示整体成功；部分云端失败仍算成功并标明）；
+ * toast=true 时轻提示结果——Toast 不打断界面，同步过程由状态球呼吸显示。
  */
 suspend fun runFullSync(context: Context, toast: Boolean): String = withContext(Dispatchers.Default) {
     if (SyncStatusBus.state == SyncStatusBus.State.RUNNING) return@withContext SyncStatusBus.message
     SyncStatusBus.setRunning()
     val pushMsg = try { CloudSync.push(context) } catch (e: Exception) { "✗ 上传失败：" + (e.message ?: "网络异常") }
     val pullMsg = try { CloudSync.pull(context) } catch (e: Exception) { "✗ 下载失败：" + (e.message ?: "网络异常") }
-    fun ok(m: String) = m.startsWith("✓") || m.contains("没有可上传的数据") ||
-            m.contains("没有可下载的数据") || m.contains("目录为空")
+    fun ok(m: String) = m.startsWith("✓") || m.contains("没有可上传的数据") || m.contains("目录为空")
     val msg = when {
-        pushMsg.contains("请先登录") && pullMsg.contains("请先登录") ||
-                pushMsg.contains("请先填写") && pullMsg.contains("请先填写") ->
+        pushMsg.contains("请先配置好同步账号") && pullMsg.contains("请先配置好同步账号") ->
             "✗ 请先在「设置 → 云同步」配置好同步账号（GitHub / Gitee / WebDAV）后再同步"
-        ok(pushMsg) && ok(pullMsg) -> {
-            val extra = listOf(pushMsg, pullMsg).filter { it.contains("已跳过") || it.contains("比本地新") }
-            if (extra.isEmpty()) "✓ 同步完成" else "✓ 同步完成：" + extra.joinToString("；")
+        else -> {
+            val head = when {
+                pushMsg.startsWith("✓") && pullMsg.startsWith("✓") -> "✓ 同步完成"
+                pushMsg.startsWith("✓") || pullMsg.startsWith("✓") -> "✓ 同步完成（部分云端未成功）"
+                else -> "✗ 同步失败"
+            }
+            listOfNotNull(pushMsg.takeIf { it.isNotBlank() }, pullMsg.takeIf { it.isNotBlank() })
+                .joinToString("\n", prefix = "$head\n")
         }
-        else -> listOf(pushMsg, pullMsg).filter { !ok(it) }.joinToString("；").ifBlank { "✗ 同步失败" }
     }
     SyncStatusBus.report(msg)
     if (toast) {

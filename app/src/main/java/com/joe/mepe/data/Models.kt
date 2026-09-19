@@ -58,6 +58,9 @@ data class TaskItem(
     @SerialName("QuantitativeCurrent") var quantitativeCurrent: Double? = null,
     @SerialName("QuantitativeUnit") var quantitativeUnit: String? = null,
     @SerialName("QuantitativeDailyMin") var quantitativeDailyMin: Double? = null,
+    /** 量化每日目标基线快照：当日完成 = 当前值 - 基线值 >= 每日目标（跨日时以首次访问的当前值滚动落基线） */
+    @SerialName("QuantSnapDate") @Serializable(with = LocalDateTimeSerializer::class) var quantSnapDate: LocalDateTime? = null,
+    @SerialName("QuantSnapValue") var quantSnapValue: Double? = null,
     @SerialName("CountTowardsParent") var countTowardsParent: Boolean = false,
     @SerialName("SortOrder") var sortOrder: Int = 0,
     @SerialName("TimeTagId") var timeTagId: Int? = null,
@@ -76,6 +79,8 @@ data class Goal(
     @SerialName("StartDate") @Serializable(with = LocalDateTimeSerializer::class) var startDate: LocalDateTime? = null,
     @SerialName("EndDate") @Serializable(with = LocalDateTimeSerializer::class) var endDate: LocalDateTime? = null,
     @SerialName("Progress") var progress: Double = 0.0,
+    /** 首次达到 100% 的时间；与 PC GoalCompletedAt 对齐。 */
+    @SerialName("GoalCompletedAt") @Serializable(with = LocalDateTimeSerializer::class) var goalCompletedAt: LocalDateTime? = null,
     @SerialName("IsArchived") var isArchived: Boolean = false,
     @SerialName("IsLocked") var isLocked: Boolean = false,
     @SerialName("IsDeleted") var isDeleted: Boolean = false,
@@ -109,6 +114,8 @@ data class TaskCompletionRecord(
     @SerialName("TaskId") var taskId: Int = 0,
     @SerialName("Date") var date: String = "",
     @SerialName("CompletedAt") @Serializable(with = LocalDateTimeSerializer::class) var completedAt: LocalDateTime = LocalDateTime.MIN,
+    /** 跨设备合并用全局唯一标识（旧数据无此字段，保存/合并时自动补） */
+    @SerialName("Uid") var uid: String? = null,
 )
 
 @Serializable
@@ -130,6 +137,8 @@ data class TimeRecord(
     @SerialName("EndTime") @Serializable(with = LocalDateTimeSerializer::class) var endTime: LocalDateTime? = null,
     @SerialName("Date") var date: String = "",
     @SerialName("Note") var note: String? = null,
+    /** 跨设备合并用全局唯一标识（旧数据无此字段，保存/合并时自动补） */
+    @SerialName("Uid") var uid: String? = null,
 ) {
     fun minutes(): Long {
         // 与桌面端一致：未结束的记录按当前时刻计入时长
@@ -147,6 +156,8 @@ data class HealthRecord(
     @SerialName("Detail") var detail: String? = null,
     @SerialName("Note") var note: String? = null,
     @SerialName("CreatedAt") @Serializable(with = LocalDateTimeSerializer::class) var createdAt: LocalDateTime = LocalDateTime.MIN,
+    /** 跨设备合并用全局唯一标识（旧数据无此字段，保存/合并时自动补） */
+    @SerialName("Uid") var uid: String? = null,
 )
 
 /** 健康数据类型常量（与桌面端一致） */
@@ -167,6 +178,8 @@ data class WaterContainer(
     @SerialName("Name") var name: String = "",
     @SerialName("CapacityMl") var capacityMl: Double = 250.0,
     @SerialName("IsBuiltIn") var isBuiltIn: Boolean = false,
+    /** 跨设备合并用全局唯一标识（旧数据无此字段，保存/合并时自动补） */
+    @SerialName("Uid") var uid: String? = null,
 )
 
 @Serializable
@@ -267,6 +280,8 @@ data class FocusSession(
     @SerialName("EndTime") @Serializable(with = LocalDateTimeSerializer::class) var endTime: LocalDateTime? = null,
     @SerialName("IsCompleted") var isCompleted: Boolean = false,
     @SerialName("Notes") var notes: String? = null,
+    /** 跨设备合并用全局唯一标识（旧数据无此字段，保存/合并时自动补） */
+    @SerialName("Uid") var uid: String? = null,
 )
 
 @Serializable

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ME</string>
+    <string name="nav_tasks">Tasks</string>
+    <string name="nav_goals">Goals</string>
+    <string name="nav_calendar">Calendar</string>
+    <string name="nav_time">Time</string>
+    <string name="nav_health">Health</string>
+    <string name="language_title">Language</string>
+    <string name="language_subtitle">Choose the app language</string>
+    <string name="language_system">System</string>
+    <string name="language_zh">中文</string>
+    <string name="language_en">English</string>
+</resources>
