@@ -61,6 +61,8 @@ object SyncConfig {
         var fileHashes: Map<String, String> = emptyMap(),
         // 待处理的同步冲突（格式：云端键|文件名）。上传时「双方都改过且无法自动合并」会记在这里，等用户决定用本机还是云端
         var pendingConflicts: List<String> = emptyList(),
+        // 最近 30 条同步记录（时间/动作/耗时/结果），同步页可查看
+        var syncHistory: List<String> = emptyList(),
     )
 
     private const val FILE = "sync_config.json"
@@ -342,7 +344,9 @@ object CloudSync {
             badNames.isEmpty() -> "✓ 上传完成：已上传到 ${okNames.joinToString("、")}"
             else -> "✓ 上传完成（部分云端未成功）：成功 ${okNames.joinToString("、")}；未成功 ${badNames.joinToString("、")}"
         }
-        (listOf(head) + lines).joinToString("\n")
+        val msg = (listOf(head) + lines).joinToString("\n")
+        recordHistory(context, conf, "上传", msg)
+        msg
     }
 
     /** 上传到单个云端 */
@@ -561,8 +565,23 @@ object CloudSync {
                 (lastErr?.let { "（$it）" } ?: "")
         else lastErr?.let { "（$it）" } ?: ""
         val summary = "下载 $n/${items.size} 个$extra$failText"
-        return if (failed.isEmpty()) Outcome(true, "✓ $summary（原数据已备份）")
+        val msg = if (failed.isEmpty()) "✓ $summary（原数据已备份）" else "⚠ $summary"
+        recordHistory(context, conf, "下载", msg)
+        return if (failed.isEmpty()) Outcome(true, msg)
         else Outcome(n > 0, "⚠ $summary")
+    }
+
+    /** 记录一条同步历史（最多保留 30 条，同步页展示） */
+    private fun recordHistory(context: Context, conf: SyncConfig.Conf, action: String, msg: String) {
+        try {
+            val head = if (msg.length > 70) msg.take(70) + "…" else msg
+            val ms = System.currentTimeMillis()
+            conf.syncHistory = (listOf(
+                java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm").format(java.time.LocalDateTime.now()) +
+                    " $action｜" + head.replace("\n", " ")
+            ) + conf.syncHistory).take(30)
+            SyncConfig.save(context, conf)
+        } catch (_: Exception) { }
     }
 
     /**

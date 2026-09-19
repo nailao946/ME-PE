@@ -46,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -362,6 +363,7 @@ private fun SyncPage(onBack: () -> Unit) {
     var pendingCode by remember { mutableStateOf("") }
     var msg by remember { mutableStateOf("") }
     var conflicts by remember(rev) { mutableStateOf(CloudSync.pendingConflicts(ctx)) }
+    var histTick by remember { mutableStateOf(0) }
     var showConflicts by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -597,6 +599,7 @@ private fun SyncPage(onBack: () -> Unit) {
                                 msg = try { CloudSync.push(ctx) } catch (e: Exception) { "✗ 上传失败：" + (e.message ?: "网络异常") }
                                 SyncStatusBus.report(msg)
                                 conflicts = CloudSync.pendingConflicts(ctx)
+                                histTick++
                                 syncing = false
                             }
                         },
@@ -612,6 +615,7 @@ private fun SyncPage(onBack: () -> Unit) {
                                 msg = try { CloudSync.pull(ctx) } catch (e: Exception) { "✗ 下载失败：" + (e.message ?: "网络异常") }
                                 SyncStatusBus.report(msg)
                                 conflicts = CloudSync.pendingConflicts(ctx)
+                                histTick++
                                 syncing = false
                             }
                         },
@@ -645,6 +649,22 @@ private fun SyncPage(onBack: () -> Unit) {
                         onClick = { showConflicts = true },
                         shape = MaterialTheme.shapes.small
                     ) { Text("处理冲突") }
+                }
+                // 同步健康度：最近 5 条（时间/动作/结果）
+                val history = remember(rev, histTick) { SyncConfig.load(ctx).syncHistory }
+                if (history.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "最近同步记录", style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    history.take(5).forEach { line ->
+                        Text(
+                            line, style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
                 if (msg.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))

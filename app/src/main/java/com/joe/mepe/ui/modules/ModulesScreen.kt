@@ -70,6 +70,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.joe.mepe.data.HtmlLibraryRepository
 import com.joe.mepe.data.CustomModule
 import com.joe.mepe.data.CustomModuleField
 import com.joe.mepe.data.CustomModuleRecord
@@ -555,6 +556,11 @@ fun ModuleEditDialog(initial: CustomModule?, onClose: () -> Unit) {
                 if (f.type == "number" || f.type == "text") {
                     LabeledField("单位（可选）", f.unit ?: "", { updateField(i, f.copy(unit = it.ifBlank { null })) })
                 }
+                if (f.type == "number") {
+                    LabeledField("最小值（可留空）", f.min?.toString() ?: "", { s -> updateField(i, f.copy(min = s.toDoubleOrNull())) })
+                    LabeledField("最大值（可留空）", f.max?.toString() ?: "", { s -> updateField(i, f.copy(max = s.toDoubleOrNull())) })
+                    LabeledField("步长（可留空）", f.step?.toString() ?: "", { s -> updateField(i, f.copy(step = s.toDoubleOrNull())) })
+                }
                 if (f.type == "select") {
                     LabeledField("候选值（逗号分隔）", f.options ?: "", { updateField(i, f.copy(options = it)) }, placeholder = "如：好,中,差")
                 }
@@ -593,10 +599,29 @@ fun ModuleEditDialog(initial: CustomModule?, onClose: () -> Unit) {
         )
     }
 }
+/** 记一笔前的数值校验：范围 + 步长（字段定义里配了才校验，返回错误提示或 null */
+private fun validateModuleRecord(m: CustomModule, values: Map<String, String>): String? {
+    m.fields.forEach { f ->
+        if (f.type != "number") return@forEach
+        val raw = values[f.key] ?: return@forEach
+        if (raw.isBlank()) return@forEach
+        val num = raw.toDoubleOrNull() ?: return "「${f.label}」需要填数字"
+        f.min?.let { if (num < it) return "「${f.label}」不能小于 $it" }
+        f.max?.let { if (num > it) return "「${f.label}」不能大于 $it" }
+        f.step?.takeIf { it > 0 }?.let { st ->
+            val steps = num / st
+            if (kotlin.math.abs(steps - kotlin.math.round(steps)) > 0.0001)
+                return "「${f.label}」需要是 $st 的整数倍"
+        }
+    }
+    return null
+}
+
 // ============ 记一笔 ============
 
 @Composable
 fun ModuleRecordDialog(m: CustomModule, onClose: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     var date by remember { mutableStateOf(LocalDate.now()) }
     var showDatePick by remember { mutableStateOf(false) }
     val values = remember { mutableStateOf(m.fields.associate { it.key to "" }) }
@@ -643,18 +668,23 @@ fun ModuleRecordDialog(m: CustomModule, onClose: () -> Unit) {
         Button(
             modifier = Modifier.fillMaxWidth().height(46.dp),
             onClick = {
-                val saved = values.value.filterKeys { it != "__note" }
-                    .filterValues { it.isNotBlank() }
-                Repos.addModuleRecord(
-                    m.id,
-                    CustomModuleRecord(
-                        date = date.toString(),
-                        time = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm")),
-                        values = saved,
-                        note = values.value["__note"]?.ifBlank { null },
+                val invalid = validateModuleRecord(m, values.value)
+                if (invalid == null) {
+                    val saved = values.value.filterKeys { it != "__note" }
+                        .filterValues { it.isNotBlank() }
+                    Repos.addModuleRecord(
+                        m.id,
+                        CustomModuleRecord(
+                            date = date.toString(),
+                            time = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm")),
+                            values = saved,
+                            note = values.value["__note"]?.ifBlank { null },
+                        )
                     )
-                )
-                onClose()
+                    onClose()
+                } else {
+                    android.widget.Toast.makeText(ctx, invalid, android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         ) { Text("保存记录") }
     }
@@ -668,6 +698,21 @@ fun ModuleRecordDialog(m: CustomModule, onClose: () -> Unit) {
 @Composable
 fun ModuleHistoryDialog(m: CustomModule, onClose: () -> Unit, onEditRecord: (CustomModule, CustomModuleRecord) -> Unit) {
     val mod = rememberData { Repos.customModules().firstOrNull { it.id == m.id } } ?: m
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(HtmlLibraryRepository.buildDefaultCsv(mod).toByteArray(Charsets.UTF_8))
+                }
+                android.widget.Toast.makeText(ctx, "已导出 CSV", android.widget.Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(ctx, "导出失败：" + (e.message ?: ""), android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
     val records = mod.records.sortedWith(
         compareBy<CustomModuleRecord> { it.date }.thenBy { it.time }.thenBy { it.id }
     )
@@ -716,6 +761,13 @@ fun ModuleHistoryDialog(m: CustomModule, onClose: () -> Unit, onEditRecord: (Cus
             }
         }
         Spacer(Modifier.height(12.dp))
-        OutlinedButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("关闭") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { exportLauncher.launch(mod.name + ".csv") },
+                modifier = Modifier.weight(1f),
+                shape = MaterialTheme.shapes.small
+            ) { Text("导出 CSV") }
+            OutlinedButton(onClick = onClose, modifier = Modifier.weight(1f)) { Text("关闭") }
+        }
     }
 }

@@ -314,6 +314,12 @@ data class CustomModuleField(
     @SerialName("Unit") var unit: String? = null,
     /** select 类型的候选值，逗号分隔 */
     @SerialName("Options") var options: String? = null,
+    /** 数值字段的最小值（null = 不限制），录入越界会被拦截 */
+    @SerialName("Min") var min: Double? = null,
+    /** 数值字段的最大值（null = 不限制） */
+    @SerialName("Max") var max: Double? = null,
+    /** 数值字段的步长（null = 不限制），如 0.5 表示只允许 0.5 的整数倍 */
+    @SerialName("Step") var step: Double? = null,
 )
 
 @Serializable

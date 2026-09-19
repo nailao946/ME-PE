@@ -119,6 +119,12 @@ app/src/main/java/com/joe/mepe/
 
 - **Fixed WebDAV (Jianguoyun) uploads failing with HTTP 409**: Jianguoyun and other WebDAV services never create parent folders implicitly — uploading into a missing folder always returns 409 (AncestorsNotFound). The old code mistook the folder-creation request's 409 for "folder already exists, go ahead", so nothing was created and every file failed. The app now creates the sync folder level by level before uploading, and a 409 during upload triggers an automatic folder re-creation plus one retry; the server address defaults to Jianguoyun (https://dav.jianguoyun.com/dav/) and is pre-filled when switching to WebDAV (desktop version fixed in sync)
 
+### v2.4.49
+
+- **Module CSV export**: the module history dialog can now export all records as a CSV file
+- **Number field constraints**: module fields can define min / max / step; the record dialog blocks out-of-range input
+- **Sync health log**: the last 30 upload/download results with duration are kept and shown on the sync page
+
 ### v2.4.48
 
 - **Module knowledge library**: custom modules can now hold offline HTML "library pages" with companion CSV — AI can generate one from the module's records, and pages open in an in-app WebView; data lives in `html_library.json` and syncs with the desktop app
