@@ -119,6 +119,11 @@ app/src/main/java/com/joe/mepe/
 
 - **Fixed WebDAV (Jianguoyun) uploads failing with HTTP 409**: Jianguoyun and other WebDAV services never create parent folders implicitly — uploading into a missing folder always returns 409 (AncestorsNotFound). The old code mistook the folder-creation request's 409 for "folder already exists, go ahead", so nothing was created and every file failed. The app now creates the sync folder level by level before uploading, and a 409 during upload triggers an automatic folder re-creation plus one retry; the server address defaults to Jianguoyun (https://dav.jianguoyun.com/dav/) and is pre-filled when switching to WebDAV (desktop version fixed in sync)
 
+### v2.4.48
+
+- **Module knowledge library**: custom modules can now hold offline HTML "library pages" with companion CSV — AI can generate one from the module's records, and pages open in an in-app WebView; data lives in `html_library.json` and syncs with the desktop app
+- Conflict resolution gains a third option "keep both" (the cloud copy is saved as `*.from-cloud.json` and keeps syncing)
+
 ### v2.4.47
 
 - **Calendar screen performance**: the whole month's status is now precomputed once per month instead of recomputing per cell on every frame, which removed the lag when opening the calendar; day cells also get an iOS-like ripple on press

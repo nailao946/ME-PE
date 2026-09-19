@@ -116,6 +116,7 @@ fun ModulesScreen(nav: (String) -> Unit) {
     var creating by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf<CustomModule?>(null) }
     var historyOf by remember { mutableStateOf<CustomModule?>(null) }
+    var libraryOf by remember { mutableStateOf<CustomModule?>(null) }
     var deleteTarget by remember { mutableStateOf<CustomModule?>(null) }
 
     val modules = rememberData { Repos.customModules().filter { !it.isDeleted } }
@@ -137,6 +138,7 @@ fun ModulesScreen(nav: (String) -> Unit) {
                 m = m,
                 onRecord = { recording = m },
                 onHistory = { historyOf = m },
+                onLibrary = { libraryOf = m },
                 onEdit = { editing = m },
                 onDelete = { deleteTarget = m },
             )
@@ -156,6 +158,7 @@ fun ModulesScreen(nav: (String) -> Unit) {
     }
     recording?.let { m -> ModuleRecordDialog(m, onClose = { recording = null }) }
     historyOf?.let { m -> ModuleHistoryDialog(m, onClose = { historyOf = null }, onEditRecord = { mod, rec -> }) }
+    libraryOf?.let { m -> HtmlLibraryDialog(m, onClose = { libraryOf = null }) }
     deleteTarget?.let { m ->
         ConfirmDialog("删除模块", "确定删除「${m.name}」及其全部 ${m.records.size} 条记录吗？", {
             Repos.deleteCustomModule(m.id)
@@ -174,6 +177,7 @@ private fun ModuleFeishuCard(
     m: CustomModule,
     onRecord: () -> Unit,
     onHistory: () -> Unit,
+    onLibrary: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -263,6 +267,8 @@ private fun ModuleFeishuCard(
             // ---- 操作区：主操作在左，次要操作靠右 ----
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FeishuTextAction(Icons.Filled.Add, "记一笔", color, onRecord)
+                Spacer(Modifier.width(4.dp))
+                FeishuTextAction(Icons.Filled.Extension, "资料库", MaterialTheme.colorScheme.onSurfaceVariant, onLibrary)
                 Spacer(Modifier.width(4.dp))
                 FeishuTextAction(Icons.Filled.MenuBook, "历史", MaterialTheme.colorScheme.onSurfaceVariant, onHistory)
                 Spacer(Modifier.weight(1f))

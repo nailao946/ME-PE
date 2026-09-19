@@ -607,7 +607,7 @@ object CloudSync {
      * 处理同步冲突：preferCloud=true 用云端覆盖本机，false 用本机覆盖云端。
      * file/provider 都为空时处理全部；处理完刷新基线并从待处理清单移除，避免下次同步再报。
      */
-    suspend fun resolveConflicts(context: Context, preferCloud: Boolean, provider: String? = null, file: String? = null): String = withContext(Dispatchers.IO) {
+    suspend fun resolveConflicts(context: Context, preferCloud: Boolean?, provider: String? = null, file: String? = null): String = withContext(Dispatchers.IO) {
         val conf = SyncConfig.load(context)
         val targets = conf.pendingConflicts.filter { entry ->
             val p = entry.substringBefore('|')
@@ -626,7 +626,20 @@ object CloudSync {
                 val backend = backendFor(conf, p)
                 backend.ensureReady(context)
                 val localFile = File(JsonStore.dir, name)
-                if (preferCloud) {
+                if (preferCloud == null) {
+                    // 两边都留：云端内容另存为 *.from-cloud.json 继续同步，本机原文件不动，下次上传时本机版本会正常推上去
+                    val r = backend.read(name)
+                    if (r != null) {
+                        val copy = name.removeSuffix(".json") + ".from-cloud.json"
+                        File(JsonStore.dir, copy).writeText(r.first)
+                        val known2 = conf.providerShas[p].orEmpty().toMutableMap()
+                        known2[copy] = r.second ?: md5(r.first)
+                        conf.providerShas = conf.providerShas + (p to known2)
+                        conf.fileHashes = conf.fileHashes + (copy to md5(r.first))
+                    }
+                    conf.pendingConflicts = conf.pendingConflicts - entry
+                    ok++
+                } else if (preferCloud == true) {
                     val r = backend.read(name) ?: throw RuntimeException("云端已没有这个文件")
                     try { JsonStore.json.parseToJsonElement(r.first) } catch (_: Exception) {
                         throw RuntimeException("云端内容不是有效 JSON")
@@ -653,7 +666,7 @@ object CloudSync {
         }
         if (ok > 0) SyncConfig.save(context, conf)
         DataBus.bump()
-        val head = "已处理 $ok/${targets.size} 个冲突（${if (preferCloud) "采用云端" else "采用本机"}）"
+        val head = "已处理 $ok/${targets.size} 个冲突（${when (preferCloud) { null -> "两边都留"; true -> "采用云端"; else -> "采用本机" }}）"
         if (errors.isEmpty()) head else "$head；失败：${errors.joinToString("；")}"
     }
 }

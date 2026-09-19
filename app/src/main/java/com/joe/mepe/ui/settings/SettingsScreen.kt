@@ -685,20 +685,18 @@ private fun SyncPage(onBack: () -> Unit) {
                                     Text(file, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
                                     Text(provider, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                TextButton(onClick = {
+                                fun resolve(keep: Boolean?) {
                                     scope.launch {
-                                        msg = try { CloudSync.resolveConflicts(ctx, preferCloud = false, provider = provider, file = file) } catch (e: Exception) { "✗ " + (e.message ?: "失败") }
+                                        msg = try {
+                                            CloudSync.resolveConflicts(ctx, preferCloud = keep, provider = provider, file = file)
+                                        } catch (e: Exception) { "✗ " + (e.message ?: "失败") }
                                         conflicts = CloudSync.pendingConflicts(ctx)
                                         if (conflicts.isEmpty()) showConflicts = false
                                     }
-                                }) { Text("用本机") }
-                                TextButton(onClick = {
-                                    scope.launch {
-                                        msg = try { CloudSync.resolveConflicts(ctx, preferCloud = true, provider = provider, file = file) } catch (e: Exception) { "✗ " + (e.message ?: "失败") }
-                                        conflicts = CloudSync.pendingConflicts(ctx)
-                                        if (conflicts.isEmpty()) showConflicts = false
-                                    }
-                                }) { Text("用云端") }
+                                }
+                                TextButton(onClick = { resolve(false) }) { Text("用本机") }
+                                TextButton(onClick = { resolve(null) }) { Text("两边都留") }
+                                TextButton(onClick = { resolve(true) }) { Text("用云端") }
                             }
                         }
                     }
