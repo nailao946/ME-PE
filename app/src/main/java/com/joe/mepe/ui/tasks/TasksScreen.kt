@@ -73,6 +73,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import android.widget.Toast
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntOffset
@@ -422,6 +423,7 @@ fun TasksScreen(nav: (String) -> Unit) {
                     TaskRowItem(
                         row = row, date = selectedDate,
                         completions = completions, goals = goals, tags = tags, timeTags = timeTags,
+                        allTasks = allTasks,
                         group = "active", isDone = false,
                         draggingKey = draggingKey, dragOffset = dragOffset, dropTargetKey = dropTargetKey,
                         onStartDrag = {
@@ -444,6 +446,7 @@ fun TasksScreen(nav: (String) -> Unit) {
                     TaskRowItem(
                         row = row, date = selectedDate,
                         completions = completions, goals = goals, tags = tags, timeTags = timeTags,
+                        allTasks = allTasks,
                         group = "done", isDone = true,
                         draggingKey = draggingKey, dragOffset = dragOffset, dropTargetKey = dropTargetKey,
                         onStartDrag = {
@@ -464,6 +467,7 @@ fun TasksScreen(nav: (String) -> Unit) {
                     TaskRowItem(
                         row = row, date = selectedDate,
                         completions = completions, goals = goals, tags = tags, timeTags = timeTags,
+                        allTasks = allTasks,
                         group = "past_done", isDone = true,
                         draggingKey = draggingKey, dragOffset = dragOffset, dropTargetKey = dropTargetKey,
                         onStartDrag = {
@@ -661,6 +665,7 @@ private fun TaskRowItem(
     goals: List<Goal>,
     tags: List<GoalTag>,
     timeTags: List<com.joe.mepe.data.TimeTag>,
+    allTasks: List<TaskItem>,
     group: String,
     isDone: Boolean,
     draggingKey: String?,
@@ -705,6 +710,7 @@ private fun TaskRowItem(
                 TaskCard(
                     task, date, completions, goals, tags, timeTags,
                     subtasks = (row as? TaskRow.Main)?.subs ?: emptyList(),
+                    allTasks = allTasks,
                     onOpen = onOpen, draggable = true,
                     showCompletedDate = group == "past_done"
                 )
@@ -798,6 +804,23 @@ private fun FilterChip2(label: String, active: Boolean, dotColor: Color? = null,
     }
 }
 
+/** 任务依赖检查：返回第一个未完成的前置任务；全部满足返回 null。
+ *  前置"已完成"口径：一次性=已永久完成；其余=当日 isDoneOn（含量化每日/总目标达标）。 */
+private fun blockingPredecessor(
+    task: TaskItem,
+    allTasks: List<TaskItem>,
+    date: LocalDate,
+    completions: List<com.joe.mepe.data.TaskCompletionRecord>,
+): TaskItem? {
+    if (task.blockedBy.isEmpty()) return null
+    for (uid in task.blockedBy) {
+        val pred = allTasks.firstOrNull { it.uid == uid } ?: continue
+        val satisfied = pred.isCompleted || TaskLogic.isDoneOn(pred, date, completions)
+        if (!satisfied) return pred
+    }
+    return null
+}
+
 /** 任务卡：勾选圈=完成/取消（量化任务=进度+步长）；点卡片=详情；左滑=编辑/删除 */
 @Composable
 private fun TaskCard(
@@ -808,6 +831,7 @@ private fun TaskCard(
     tags: List<GoalTag>,
     timeTags: List<com.joe.mepe.data.TimeTag>,
     subtasks: List<TaskItem>,
+    allTasks: List<TaskItem>,
     onOpen: (TaskItem) -> Unit,
     draggable: Boolean = false,
     showCompletedDate: Boolean = false,
@@ -822,6 +846,9 @@ private fun TaskCard(
     val doneColor = accent ?: MaterialTheme.colorScheme.primary
     val progress = if (task.type == TaskTypes.QUANTITATIVE && task.quantitativeTarget != null && task.quantitativeTarget!! > 0)
         ((task.quantitativeCurrent ?: 0.0) / task.quantitativeTarget!!).coerceIn(0.0, 1.0) else null
+    // 任务依赖：未完成前置 → 锁定，点击打卡弹提示且不落地完成
+    val blocker = blockingPredecessor(task, allTasks, date, completions)
+    val isLocked = blocker != null
 
     Card(
         Modifier.fillMaxWidth().clickable { onOpen(task) },
@@ -843,6 +870,7 @@ private fun TaskCard(
                 Spacer(Modifier.width(9.dp))
             }
             // 打卡圈（完成入口；量化任务点击=进度+步长；已永久完成的一次性任务不再可点）
+            val toastCtx = LocalContext.current
             Box(
                 Modifier.size(26.dp)
                     .border(
@@ -853,6 +881,10 @@ private fun TaskCard(
                     )
                     .background(if (done) doneColor else Color.Transparent, CircleShape)
                     .clickable(enabled = !showCompletedDate) {
+                        if (isLocked) {
+                            Toast.makeText(toastCtx, "需先完成：${blocker!!.title}", Toast.LENGTH_SHORT).show()
+                            return@clickable
+                        }
                         if (task.type == TaskTypes.QUANTITATIVE) {
                             TaskLogic.adjustQuantitative(task, TaskLogic.quantStep(task))
                             DataBus.bump()
@@ -863,10 +895,12 @@ private fun TaskCard(
                 contentAlignment = Alignment.Center
             ) {
                 if (done) Icon(Icons.Filled.Check, "完成", tint = Color.White, modifier = Modifier.size(16.dp))
+                else if (isLocked) Text("🔒", style = MaterialTheme.typography.labelSmall)
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isLocked) { Text("🔒", style = MaterialTheme.typography.bodyLarge); Spacer(Modifier.width(4.dp)) }
                     if (tagColor != null) { com.joe.mepe.ui.ColorDot(parseHexColor(tagColor, MaterialTheme.colorScheme.primary)); Spacer(Modifier.width(6.dp)) }
                     Text(
                         task.title,
@@ -888,6 +922,7 @@ private fun TaskCard(
                     if (task.type != TaskTypes.ONE_TIME) append(TaskLogic.patternName(task))
                     if (progress != null) append(" · ${(progress * 100).toInt()}%")
                     if (subtasks.isNotEmpty()) append(" · 子任务 ${subtasks.size}")
+                    if (isLocked) append(" · 依赖未完成")
                     if (need > 0) append(" · ${completions.count { it.taskId == task.id && it.date == date.toString() }}/$need")
                 }
                 if (meta.isNotBlank())

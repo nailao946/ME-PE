@@ -32,11 +32,28 @@ object JsonStore {
 
     private fun file(name: String) = File(dir, "$name.json")
 
+    /**
+     * 解析结果内存缓存：Tab 切换/页面重建时同一文件会被反复读取，
+     * 直接复用上次解析结果（按 lastModified + length 校验，文件被云同步等
+     * 外部直接改写后自动失效重读），把主线程上的重复 IO+JSON 解析降到近零。
+     */
+    private class CacheEntry(val mod: Long, val len: Long, val data: List<*>)
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, CacheEntry>()
+
+    @Suppress("UNCHECKED_CAST")
     fun <T> loadList(name: String, loader: (File) -> List<T>): MutableList<T> {
         val f = file(name)
-        if (!f.exists()) return mutableListOf()
+        if (!f.exists()) { cache.remove(name); return mutableListOf() }
+        val mod = f.lastModified()
+        val len = f.length()
+        val hit = cache[name]
+        if (hit != null && hit.mod == mod && hit.len == len) {
+            return (hit.data as List<T>).toMutableList()
+        }
         return try {
-            loader(f).toMutableList()
+            val list = loader(f)
+            cache[name] = CacheEntry(mod, len, list)
+            list.toMutableList()
         } catch (_: Exception) {
             mutableListOf()
         }
@@ -44,6 +61,7 @@ object JsonStore {
 
     fun saveText(name: String, text: String) {
         File(dir, "$name.json").writeText(text)
+        cache.remove(name) // 写入后让缓存失效，下次读取以文件为准
     }
 
     fun readText(name: String): String? {

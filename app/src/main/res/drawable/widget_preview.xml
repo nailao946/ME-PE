@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小组件选择器预览图（API < 31 的启动器只认 previewImage，缺了会显示成空白项） -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="20dp" />
+            <solid android:color="#F2FFFFFF" />
+            <stroke android:width="1dp" android:color="#66B9C6E8" />
+        </shape>
+    </item>
+    <item android:left="14dp" android:right="60dp" android:top="14dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="4dp" />
+            <solid android:color="#CC1B1D25" />
+            <size android:height="13dp" />
+        </shape>
+    </item>
+    <item android:left="200dp" android:right="14dp" android:top="15dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="4dp" />
+            <solid android:color="#4D4F6EF7" />
+            <size android:height="12dp" />
+        </shape>
+    </item>
+    <item android:left="14dp" android:right="90dp" android:top="44dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="3dp" />
+            <solid android:color="#338A8F9E" />
+            <size android:height="10dp" />
+        </shape>
+    </item>
+    <item android:left="14dp" android:right="130dp" android:top="66dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="3dp" />
+            <solid android:color="#2E8A8F9E" />
+            <size android:height="10dp" />
+        </shape>
+    </item>
+    <item android:left="14dp" android:right="70dp" android:top="88dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="3dp" />
+            <solid android:color="#298A8F9E" />
+            <size android:height="10dp" />
+        </shape>
+    </item>
+</layer-list>

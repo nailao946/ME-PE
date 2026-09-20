@@ -27,6 +27,7 @@ object TimeFrames { const val SHORT = 0; const val LONG = 1; const val INSPIRATI
 @Serializable
 data class TaskItem(
     @SerialName("Id") var id: Int = 0,
+    @SerialName("Uid") var uid: String = "",
     @SerialName("Title") var title: String = "",
     @SerialName("Description") var description: String? = null,
     @SerialName("Type") var type: Int = TaskTypes.ONE_TIME,
@@ -61,6 +62,10 @@ data class TaskItem(
     /** 量化每日目标基线快照：当日完成 = 当前值 - 基线值 >= 每日目标（跨日时以首次访问的当前值滚动落基线） */
     @SerialName("QuantSnapDate") @Serializable(with = LocalDateTimeSerializer::class) var quantSnapDate: LocalDateTime? = null,
     @SerialName("QuantSnapValue") var quantSnapValue: Double? = null,
+    /** 量化补记日志：某日增量（桌面端新增，当日进度 = 当日 Delta 合计） */
+    @SerialName("QuantLog") var quantLog: List<QuantEntry> = emptyList(),
+    /** 任务依赖：前置任务 Uid 列表（桌面端新增） */
+    @SerialName("BlockedBy") var blockedBy: List<String> = emptyList(),
     @SerialName("CountTowardsParent") var countTowardsParent: Boolean = false,
     @SerialName("SortOrder") var sortOrder: Int = 0,
     @SerialName("TimeTagId") var timeTagId: Int? = null,
@@ -88,6 +93,8 @@ data class Goal(
     @SerialName("CreatedAt") @Serializable(with = LocalDateTimeSerializer::class) var createdAt: LocalDateTime = LocalDateTime.MIN,
     @SerialName("UpdatedAt") @Serializable(with = LocalDateTimeSerializer::class) var updatedAt: LocalDateTime = LocalDateTime.MIN,
     @SerialName("Notes") var notes: String? = null,
+    /** 里程碑清单（桌面端新增，元素 {"Title","Done","CreatedAt"}） */
+    @SerialName("Milestones") var milestones: List<Milestone> = emptyList(),
     @SerialName("TagId") var tagId: Int? = null,
     /** 绑定的时间标签（TimeTagId，两端一致；目标下的任务默认继承） */
     @SerialName("TimeTagId") var timeTagId: Int? = null,
@@ -97,6 +104,14 @@ data class Goal(
     @SerialName("QuantitativeCurrent") var quantitativeCurrent: Double? = null,
     @SerialName("QuantitativeUnit") var quantitativeUnit: String? = null,
     @SerialName("SortOrder") var sortOrder: Int = 0,
+)
+
+/** 目标里程碑（与桌面端 Milestones 字段对齐，PascalCase） */
+@Serializable
+data class Milestone(
+    @SerialName("Title") var title: String = "",
+    @SerialName("Done") var done: Boolean = false,
+    @SerialName("CreatedAt") var createdAt: String = "",
 )
 
 @Serializable
@@ -167,6 +182,9 @@ object HealthTypes {
     const val WATER = "water"
     const val MOOD = "mood"
     const val URIC_ACID = "uric_acid"
+    const val BLOOD_PRESSURE = "blood_pressure"
+    const val HEART_RATE = "heart_rate"
+    const val BLOOD_SUGAR = "blood_sugar"
     const val EXERCISE = "exercise"
     const val SEDENTARY = "sedentary"
     const val MEDICATION = "medication"
@@ -342,4 +360,26 @@ data class CustomModule(
     @SerialName("Records") var records: MutableList<CustomModuleRecord> = mutableListOf(),
     @SerialName("CreatedAt") @Serializable(with = LocalDateTimeSerializer::class) var createdAt: LocalDateTime = LocalDateTime.MIN,
     @SerialName("IsDeleted") var isDeleted: Boolean = false,
+)
+
+// ============ 记账（expenses.json，与桌面端 C# 模型 PascalCase 字段对齐） ============
+
+@Serializable
+data class ExpenseRecord(
+    @SerialName("Id") var id: Int = 0,
+    @SerialName("Uid") var uid: String = "",
+    @SerialName("Date") var date: String = "", // yyyy-MM-dd
+    @SerialName("Amount") var amount: Double = 0.0,
+    @SerialName("IsIncome") var isIncome: Boolean = false,
+    @SerialName("Category") var category: String = "",
+    @SerialName("Note") var note: String? = null,
+    @SerialName("CreatedAt") var createdAt: String = "", // yyyy-MM-dd HH:mm:ss
+)
+
+// ============ 量化补记日志项（Task.QuantLog，桌面端新增） ============
+
+@Serializable
+data class QuantEntry(
+    @SerialName("Date") var date: String = "",
+    @SerialName("Delta") var delta: Double = 0.0,
 )

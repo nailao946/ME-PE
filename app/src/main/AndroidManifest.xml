@@ -29,7 +29,20 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- 长按图标快捷菜单：开始计时 / 停止计时 / 添加小部件 -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- 快捷方式落地页：透明无界面，处理完立即结束 -->
+        <activity
+            android:name=".ShortcutTrampolineActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="" />
 
         <service
             android:name=".data.TimerNotificationService"

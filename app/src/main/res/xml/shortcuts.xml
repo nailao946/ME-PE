@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 长按应用图标的快捷菜单（开始计时 / 停止计时 / 添加小部件） -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="start_timer"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_play"
+        android:shortcutShortLabel="@string/shortcut_start"
+        android:shortcutLongLabel="@string/shortcut_start">
+        <intent
+            android:action="com.joe.mepe.action.SHORTCUT_START_TIMER"
+            android:targetPackage="com.joe.mepe"
+            android:targetClass="com.joe.mepe.ShortcutTrampolineActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="stop_timer"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_stop"
+        android:shortcutShortLabel="@string/shortcut_stop"
+        android:shortcutLongLabel="@string/shortcut_stop">
+        <intent
+            android:action="com.joe.mepe.action.SHORTCUT_STOP_TIMER"
+            android:targetPackage="com.joe.mepe"
+            android:targetClass="com.joe.mepe.ShortcutTrampolineActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="add_widget"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_widget"
+        android:shortcutShortLabel="@string/shortcut_widget"
+        android:shortcutLongLabel="@string/shortcut_widget">
+        <intent
+            android:action="com.joe.mepe.action.SHORTCUT_ADD_WIDGET"
+            android:targetPackage="com.joe.mepe"
+            android:targetClass="com.joe.mepe.ShortcutTrampolineActivity" />
+    </shortcut>
+</shortcuts>

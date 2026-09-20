@@ -24,6 +24,7 @@ object Repos {
     fun addTask(t: TaskItem): Int {
         val all = JsonStore.loadList("tasks") { f -> JsonStore.json.decodeFromString(taskK, f.readText()) }
         t.id = (all.maxOfOrNull { it.id } ?: 0) + 1
+        if (t.uid.isBlank()) t.uid = newUid()
         t.createdAt = LocalDateTime.now()
         t.updatedAt = LocalDateTime.now()
         t.sortOrder = (all.filter { !it.isDeleted }.maxOfOrNull { it.sortOrder } ?: -1) + 1

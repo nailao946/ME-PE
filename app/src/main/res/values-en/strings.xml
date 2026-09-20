@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ME</string>
+    <string name="widget_title">Today\'s Tasks</string>
+    <string name="widget_description">See today\'s tasks and completion progress on your home screen</string>
+    <string name="widget_no_tasks">No tasks</string>
+    <string name="widget_empty_today">Nothing scheduled for today</string>
+    <string name="widget_more">%1$d more, tap to view</string>
+    <string name="widget_open_hint">Open the app to view</string>
     <string name="nav_tasks">Tasks</string>
     <string name="nav_goals">Goals</string>
     <string name="nav_calendar">Calendar</string>
@@ -11,4 +17,17 @@
     <string name="language_system">System</string>
     <string name="language_zh">中文</string>
     <string name="language_en">English</string>
+    <string name="exit_hint">Swipe back again to exit</string>
+    <string name="shortcut_start">Start Timer</string>
+    <string name="shortcut_stop">Stop Timer</string>
+    <string name="shortcut_widget">Add Widget</string>
+    <string name="shortcut_started">Timer started · %1$s</string>
+    <string name="shortcut_already_running">Timer is already running</string>
+    <string name="shortcut_not_running">No timer is running</string>
+    <string name="shortcut_stopped">Timer stopped</string>
+    <string name="shortcut_no_tags">Create a time tag in the app\'s Time page first</string>
+    <string name="shortcut_failed">Action failed, please open the app and retry</string>
+    <string name="widget_guide_title">Add the \"Today\'s Tasks\" widget</string>
+    <string name="widget_guide_text">Long-press an empty area of the home screen → choose Widgets → find ME → drag \"Today\'s Tasks\" onto your home screen. The widget refreshes automatically as tasks change.</string>
+    <string name="widget_guide_ok">Got it</string>
 </resources>

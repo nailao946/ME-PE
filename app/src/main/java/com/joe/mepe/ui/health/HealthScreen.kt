@@ -101,11 +101,11 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 /** 健康页：固定在左侧的总览入口 + 可横向滚动的子页签 + 对比与 AI 分析 */
-private val healthTabs = listOf("睡眠", "身体", "喝水", "心情", "尿酸", "锻炼", "久坐", "用药", "对比")
+private val healthTabs = listOf("睡眠", "身体", "喝水", "心情", "尿酸", "体征", "锻炼", "久坐", "用药", "对比")
 
 private val healthTabIcons = listOf(
     Icons.Filled.Bedtime, Icons.Filled.MonitorWeight, Icons.Filled.WaterDrop,
-    Icons.Filled.Mood, Icons.Filled.Science, Icons.Filled.FitnessCenter, Icons.Filled.Chair,
+    Icons.Filled.Mood, Icons.Filled.Science, Icons.Filled.Favorite, Icons.Filled.FitnessCenter, Icons.Filled.Chair,
     Icons.Filled.Medication, Icons.Filled.CompareArrows,
 )
 
@@ -182,9 +182,10 @@ fun HealthScreen(nav: (String) -> Unit) {
                         2 -> WaterTab()
                         3 -> MoodTab()
                         4 -> UricTab()
-                        5 -> ExerciseTab()
-                        6 -> SedentaryTab()
-                        7 -> MedicationTab()
+                        5 -> VitalsTab()
+                        6 -> ExerciseTab()
+                        7 -> SedentaryTab()
+                        8 -> MedicationTab()
                         else -> CompareTab()
                     }
                 }
@@ -303,9 +304,9 @@ fun HealthOverview(onSwitchTab: (Int) -> Unit) {
                 val entries = listOf(
                     Triple(Icons.Filled.Bedtime, "睡眠", 0), Triple(Icons.Filled.MonitorWeight, "体重", 1),
                     Triple(Icons.Filled.WaterDrop, "喝水", 2), Triple(Icons.Filled.Mood, "心情", 3),
-                    Triple(Icons.Filled.Science, "尿酸", 4), Triple(Icons.Filled.FitnessCenter, "锻炼", 5),
-                    Triple(Icons.Filled.Chair, "久坐", 6), Triple(Icons.Filled.Medication, "用药", 7),
-                    Triple(Icons.Filled.CompareArrows, "对比", 8),
+                    Triple(Icons.Filled.Science, "尿酸", 4), Triple(Icons.Filled.Favorite, "体征", 5),
+                    Triple(Icons.Filled.FitnessCenter, "锻炼", 6), Triple(Icons.Filled.Chair, "久坐", 7),
+                    Triple(Icons.Filled.Medication, "用药", 8), Triple(Icons.Filled.CompareArrows, "对比", 9),
                 )
                 entries.chunked(3).forEach { rowEntries ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -763,6 +764,212 @@ fun UricTab() {
         }
     }
     TrendCard("近30天尿酸趋势", values, days)
+}
+
+// ============ 体征（血压 / 心率 / 血糖） ============
+
+private val C_GREEN = Color(0xFF2E9E5B)
+private val C_YELLOW = Color(0xFFE0A93C)
+private val C_RED = Color(0xFFE5484D)
+private val C_BLUE = Color(0xFF4F6EF7)
+
+private fun bpLevel(sys: Double, dia: Double): Pair<String, Color> = when {
+    sys >= 140 || dia >= 90 -> "偏高" to C_RED
+    sys >= 130 || dia >= 85 -> "临界" to C_YELLOW
+    sys < 90 || dia < 60 -> "偏低" to C_BLUE
+    else -> "正常" to C_GREEN
+}
+private fun hrLevel(hr: Double): Pair<String, Color> = when {
+    hr < 60 -> "偏缓" to C_BLUE
+    hr > 100 -> "偏快" to C_YELLOW
+    else -> "正常" to C_GREEN
+}
+private fun sugarLevel(v: Double, fasting: Boolean): Pair<String, Color> = if (fasting) when {
+    v < 3.9 -> "偏低" to C_BLUE
+    v <= 6.1 -> "正常" to C_GREEN
+    v <= 7.0 -> "临界" to C_YELLOW
+    else -> "偏高" to C_RED
+} else when {
+    v < 7.8 -> "正常" to C_GREEN
+    v <= 11.1 -> "临界" to C_YELLOW
+    else -> "偏高" to C_RED
+}
+
+@Composable
+private fun VitalCard(
+    title: String, icon: ImageVector,
+    todayText: String, level: Pair<String, Color>?,
+    ref: String, avgText: String, onAdd: () -> Unit,
+) {
+    SectionCard(title = title) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(40.dp)
+                    .background((level?.second ?: LocalIconColor.current).copy(alpha = 0.15f), RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center
+            ) { Icon(icon, null, modifier = Modifier.size(22.dp), tint = level?.second ?: LocalIconColor.current) }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(todayText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                    color = level?.second ?: MaterialTheme.colorScheme.onSurface)
+                if (level != null)
+                    Text("分级：${level.first}", style = MaterialTheme.typography.bodySmall,
+                        color = level.second, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(ref, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(avgText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(6.dp))
+        Button(onClick = onAdd, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.small) { Text("记一笔") }
+    }
+}
+
+@Composable
+fun VitalsTab() {
+    val rev = DataBus.rev
+    val today = LocalDate.now()
+    val records = remember(rev) { Repos.health() }
+    val days = lastNDays(7)
+    fun recOf(type: String, d: LocalDate) = records.lastOrNull { it.type == type && it.date == d.toString() }
+
+    // 血压
+    val bp = recOf(HealthTypes.BLOOD_PRESSURE, today)
+    val bpSys = bp?.value ?: Double.NaN
+    val bpDia = bp?.detail?.toDoubleOrNull() ?: Double.NaN
+    val bpAvgs = run {
+        val vals = days.mapNotNull { d -> recOf(HealthTypes.BLOOD_PRESSURE, d)?.let { it.value to (it.detail?.toDoubleOrNull() ?: Double.NaN) } }
+            .filter { !it.second.isNaN() }
+        if (vals.isEmpty()) null else vals.map { it.first }.average() to vals.map { it.second }.average()
+    }
+    var showBP by remember { mutableStateOf(false) }
+
+    // 心率
+    val hr = recOf(HealthTypes.HEART_RATE, today)
+    val hrAvg = days.mapNotNull { d -> recOf(HealthTypes.HEART_RATE, d)?.value }.let { if (it.isEmpty()) null else it.average() }
+    var showHR by remember { mutableStateOf(false) }
+
+    // 血糖
+    val sugar = recOf(HealthTypes.BLOOD_SUGAR, today)
+    val sugarFasting = sugar?.detail != "post"
+    val sugarAvg = days.mapNotNull { d -> recOf(HealthTypes.BLOOD_SUGAR, d)?.value }.let { if (it.isEmpty()) null else it.average() }
+    var showSugar by remember { mutableStateOf(false) }
+
+    Column {
+        VitalCard(
+            title = "血压", icon = Icons.Filled.Favorite,
+            todayText = if (bp != null && !bpDia.isNaN()) "收缩压 ${bpSys.toInt()} / 舒张压 ${bpDia.toInt()} mmHg" else "— 暂无今日记录",
+            level = if (bp != null && !bpDia.isNaN()) bpLevel(bpSys, bpDia) else null,
+            ref = "参考：正常<120/80；偏高≥140/90；临界≥130/85；偏低<90/60",
+            avgText = if (bpAvgs != null) "近7天平均：收缩 ${bpAvgs.first.toInt()} / 舒张 ${bpAvgs.second.toInt()} mmHg" else "近7天平均：暂无数据",
+            onAdd = { showBP = true }
+        )
+        VitalCard(
+            title = "心率", icon = Icons.Filled.Favorite,
+            todayText = if (hr != null) "${hr.value.toInt()} bpm（静息）" else "— 暂无今日记录",
+            level = if (hr != null) hrLevel(hr.value) else null,
+            ref = "参考：正常 60~100 bpm；偏缓<60；偏快>100",
+            avgText = if (hrAvg != null) "近7天平均：${"%.0f".format(hrAvg)} bpm" else "近7天平均：暂无数据",
+            onAdd = { showHR = true }
+        )
+        VitalCard(
+            title = "血糖", icon = Icons.Filled.Favorite,
+            todayText = if (sugar != null) "${"%.1f".format(sugar.value)} mmol/L（${if (sugarFasting) "空腹" else "餐后"}）" else "— 暂无今日记录",
+            level = if (sugar != null) sugarLevel(sugar.value, sugarFasting) else null,
+            ref = "参考：空腹 3.9~6.1（偏高>7.0）；餐后<7.8 正常（偏高>11.1）",
+            avgText = if (sugarAvg != null) "近7天平均：${"%.1f".format(sugarAvg)} mmol/L" else "近7天平均：暂无数据",
+            onAdd = { showSugar = true }
+        )
+    }
+
+    // 血压录入
+    if (showBP) {
+        var sysStr by remember { mutableStateOf("") }
+        var diaStr by remember { mutableStateOf("") }
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showBP = false }) {
+            androidx.compose.material3.Card(shape = MaterialTheme.shapes.large) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("记录血压", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(10.dp))
+                    com.joe.mepe.ui.NumberField("收缩压（60~260）", sysStr, { sysStr = it })
+                    com.joe.mepe.ui.NumberField("舒张压（40~180）", diaStr, { diaStr = it })
+                    Spacer(Modifier.height(6.dp))
+                    val s = sysStr.toDoubleOrNull(); val d = diaStr.toDoubleOrNull()
+                    if (s != null && d != null)
+                        Text("评估：${bpLevel(s, d).first}", color = bpLevel(s, d).second,
+                            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { showBP = false }) { Text("取消") }
+                        Button(onClick = {
+                            val sv = s ?: return@Button; val dv = d ?: return@Button
+                            if (sv in 60.0..260.0 && dv in 40.0..180.0 && sv > dv) {
+                                Repos.upsertHealth(HealthTypes.BLOOD_PRESSURE, today, sv, dv.toInt().toString())
+                                showBP = false
+                            }
+                        }, enabled = s != null && d != null && s in 60.0..260.0 && d in 40.0..180.0 && s > d) { Text("保存") }
+                    }
+                }
+            }
+        }
+    }
+
+    // 心率录入
+    if (showHR) {
+        var vStr by remember { mutableStateOf("") }
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showHR = false }) {
+            androidx.compose.material3.Card(shape = MaterialTheme.shapes.large) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("记录心率", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(10.dp))
+                    com.joe.mepe.ui.NumberField("静息心率（30~220 bpm）", vStr, { vStr = it })
+                    Spacer(Modifier.height(6.dp))
+                    val v = vStr.toDoubleOrNull()
+                    if (v != null)
+                        Text("评估：${hrLevel(v).first}", color = hrLevel(v).second,
+                            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { showHR = false }) { Text("取消") }
+                        Button(onClick = {
+                            val vv = v ?: return@Button
+                            if (vv in 30.0..220.0) { Repos.upsertHealth(HealthTypes.HEART_RATE, today, vv); showHR = false }
+                        }, enabled = v != null && v in 30.0..220.0) { Text("保存") }
+                    }
+                }
+            }
+        }
+    }
+
+    // 血糖录入
+    if (showSugar) {
+        var vStr by remember { mutableStateOf("") }
+        var fasting by remember { mutableStateOf(true) }
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showSugar = false }) {
+            androidx.compose.material3.Card(shape = MaterialTheme.shapes.large) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("记录血糖", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(10.dp))
+                    com.joe.mepe.ui.NumberField("血糖（1~35 mmol/L）", vStr, { vStr = it })
+                    Spacer(Modifier.height(6.dp))
+                    com.joe.mepe.ui.Segmented(listOf("空腹", "餐后"), if (fasting) 0 else 1) { fasting = it == 0 }
+                    Spacer(Modifier.height(6.dp))
+                    val v = vStr.toDoubleOrNull()
+                    if (v != null)
+                        Text("评估：${sugarLevel(v, fasting).first}", color = sugarLevel(v, fasting).second,
+                            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { showSugar = false }) { Text("取消") }
+                        Button(onClick = {
+                            val vv = v ?: return@Button
+                            if (vv in 1.0..35.0) { Repos.upsertHealth(HealthTypes.BLOOD_SUGAR, today, vv, if (fasting) "fasting" else "post"); showSugar = false }
+                        }, enabled = v != null && v in 1.0..35.0) { Text("保存") }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ============ 锻炼 ============

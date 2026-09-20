@@ -46,6 +46,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -470,6 +471,7 @@ private fun GoalNode(
                         val meta = buildString {
                             if (children.isNotEmpty()) append("子目标 ${children.size} · ")
                             if (subTasks.isNotEmpty()) append("任务 ${subTasks.size} · ")
+                            if (goal.milestones.isNotEmpty()) append("里程碑 ${goal.milestones.count { it.done }}/${goal.milestones.size} · ")
                             if (boundTimeTag != null) append("⏱ ${boundTimeTag.name} · ")
                             goal.endDate?.let { append("截止 ${it.toLocalDate()} · ") }
                             if (goal.quantitativeTarget != null && goal.quantitativeTarget!! > 0)
@@ -1069,6 +1071,58 @@ private fun GoalDetailSheet(
             com.joe.mepe.ui.RoundedProgressBar(
                 progress = progress.toFloat(), heightDp = 10, color = color
             )
+            Spacer(Modifier.height(12.dp))
+            // 里程碑清单（可勾选完成态 / 新增）
+            val live = rememberData<com.joe.mepe.data.Goal?> { Repos.goals().find { it.id == goal.id } } ?: goal
+            val milestones = live.milestones
+            var newMs by remember { mutableStateOf("") }
+            fun saveMs(list: List<com.joe.mepe.data.Milestone>) {
+                live.milestones = list
+                Repos.updateGoal(live)
+                DataBus.bump()
+            }
+            Text("里程碑（${milestones.count { it.done }}/${milestones.size}）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            if (milestones.isEmpty()) Text("暂无里程碑，在下方添加", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            milestones.forEachIndexed { i, m ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier.size(22.dp)
+                            .border(2.dp, if (m.done) color else MaterialTheme.colorScheme.outline, CircleShape)
+                            .background(if (m.done) color else Color.Transparent, CircleShape)
+                            .clickable {
+                                val list = milestones.toMutableList()
+                                list[i] = list[i].copy(done = !m.done)
+                                saveMs(list)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (m.done) Icon(Icons.Filled.Check, "已完成", tint = Color.White, modifier = Modifier.size(13.dp))
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        m.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
+                        textDecoration = if (m.done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
+                        color = if (m.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = newMs, onValueChange = { newMs = it }, label = { Text("添加里程碑") },
+                    modifier = Modifier.weight(1f), singleLine = true, shape = MaterialTheme.shapes.small
+                )
+                TextButton(onClick = {
+                    if (newMs.isNotBlank()) {
+                        saveMs(milestones + com.joe.mepe.data.Milestone(title = newMs.trim(), createdAt = LocalDate.now().toString()))
+                        newMs = ""
+                    }
+                }, enabled = newMs.isNotBlank()) { Text("添加") }
+            }
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 androidx.compose.material3.OutlinedButton(onClick = onAddSub, modifier = Modifier.weight(1f)) {

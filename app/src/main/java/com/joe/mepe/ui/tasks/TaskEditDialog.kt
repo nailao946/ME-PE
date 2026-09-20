@@ -76,6 +76,10 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
     var quantUnit by remember { mutableStateOf(initial?.quantitativeUnit ?: "") }
     var quantDailyMin by remember { mutableStateOf(if (initial?.quantitativeDailyMin != null) trimNum(initial.quantitativeDailyMin!!) else "") }
 
+    // 前置依赖：列出其它已生成 Uid 的任务，勾选其 Uid 作为本任务的前置（依赖未满足时本任务不可打卡）
+    val depCandidates = remember { Repos.tasks().filter { it.uid.isNotBlank() && it.id != (initial?.id ?: -1) } }
+    var blockedBy by remember { mutableStateOf<List<String>>(initial?.blockedBy ?: emptyList()) }
+
     var showStartPick by remember { mutableStateOf(false) }
     var showEndPick by remember { mutableStateOf(false) }
     var showPatternPick by remember { mutableStateOf(false) }
@@ -216,6 +220,26 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
                     }
                 }
 
+                Spacer(Modifier.height(10.dp))
+                // 前置依赖：勾选需要先完成的任务（依赖未满足时本任务显示 🔒 且点击完成提示）
+                Text("前置依赖（先完成这些才能打卡）", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(6.dp))
+                if (depCandidates.isEmpty()) {
+                    Text("暂无其它任务可选", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    androidx.compose.foundation.lazy.LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(depCandidates, key = { it.id }) { t ->
+                            val on = t.uid in blockedBy
+                            GoalChip(t.title, on, null) {
+                                blockedBy = if (on) blockedBy - t.uid else blockedBy + t.uid
+                            }
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(16.dp))
                 Button(
                     modifier = Modifier.fillMaxWidth().height(46.dp),
@@ -239,6 +263,7 @@ fun TaskEditDialog(initial: TaskItem?, goals: List<Goal>, onClose: () -> Unit) {
                                 this.quantitativeTarget = if (type == TaskTypes.QUANTITATIVE) quantTarget.toDoubleOrNull() else null
                                 this.quantitativeUnit = if (type == TaskTypes.QUANTITATIVE) quantUnit.ifBlank { null } else null
                                 this.quantitativeDailyMin = if (type == TaskTypes.QUANTITATIVE) (quantDailyMin.toDoubleOrNull() ?: 1.0) else null
+                                this.blockedBy = blockedBy
                                 if (isNew) { this.isCompleted = false; this.createdAt = LocalDateTime.now() }
                                 this.updatedAt = LocalDateTime.now()
                             }

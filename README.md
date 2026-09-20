@@ -119,6 +119,14 @@ app/src/main/java/com/joe/mepe/
 
 - **Fixed WebDAV (Jianguoyun) uploads failing with HTTP 409**: Jianguoyun and other WebDAV services never create parent folders implicitly — uploading into a missing folder always returns 409 (AncestorsNotFound). The old code mistook the folder-creation request's 409 for "folder already exists, go ahead", so nothing was created and every file failed. The app now creates the sync folder level by level before uploading, and a 409 during upload triggers an automatic folder re-creation plus one retry; the server address defaults to Jianguoyun (https://dav.jianguoyun.com/dav/) and is pre-filled when switching to WebDAV (desktop version fixed in sync)
 
+### v2.4.51
+
+- **Long-press app icon shortcuts**: like WeChat, long-pressing the ME icon now shows a quick menu with Start Timer (starts time tracking with the most recently used tag via a transparent trampoline — toast plus the running chronometer notification, no app UI), Stop Timer (stops the running timer), and Add Widget (opens a short guide on placing the home-screen widget); fully localized in Chinese and English
+
+### v2.4.50
+
+- **Home screen widget rebuilt**: light/dark colours now follow the system night mode (dark launchers get a dark card instead of the fixed white one), the widget picker gains a preview image so older launchers no longer show a blank entry, the row count adapts to the widget's resized height (2–10 rows), the renderer is exception-proof (a data failure can no longer leave the widget permanently blank — it falls back to "open the app to view"), the widget gets a fallback refresh on app start, and widget strings are localized (English added)
+
 ### v2.4.49
 
 - **Module CSV export**: the module history dialog can now export all records as a CSV file

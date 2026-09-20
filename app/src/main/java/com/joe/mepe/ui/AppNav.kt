@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -36,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -62,6 +64,7 @@ object Routes {
     const val REVIEW = "review"
     const val SETTINGS = "settings"
     const val MODULES = "modules"
+    const val EXPENSES = "expenses"
     const val BACK = "__back"
 
     val mainTabs = listOf(TASKS, GOALS, CALENDAR, TIME, HEALTH)
@@ -82,6 +85,7 @@ private val tabs = listOf(
 fun QuickLinks(current: String, nav: (String) -> Unit) {
     val links = listOf(
         Icons.Filled.Extension to Routes.MODULES,
+        Icons.Filled.AccountBalanceWallet to Routes.EXPENSES,
         Icons.Filled.Map to Routes.MAP,
         Icons.Filled.RateReview to Routes.REVIEW,
         Icons.Filled.Settings to Routes.SETTINGS,
@@ -109,7 +113,7 @@ fun AppRoot(onLanguageChanged: (String) -> Unit = {}) {
     // 方向感知转场：进入二级页=从右滑入，返回主 Tab=向下滑入，避免来回跳变
     var forward by rememberSaveable { mutableStateOf(true) }
 
-    val overlays = setOf(Routes.MAP, Routes.REVIEW, Routes.SETTINGS, Routes.MODULES)
+    val overlays = setOf(Routes.MAP, Routes.REVIEW, Routes.SETTINGS, Routes.MODULES, Routes.EXPENSES)
 
     fun navigate(target: String) {
         if (target == Routes.BACK) {
@@ -132,6 +136,20 @@ fun AppRoot(onLanguageChanged: (String) -> Unit = {}) {
     val isMain = route in Routes.mainTabs
     androidx.activity.compose.BackHandler(enabled = !isMain) {
         navigate(Routes.BACK)
+    }
+
+    // 主界面两次返回退出：第一次轻提示，2 秒内再返回则退出应用
+    val activity = LocalContext.current as? android.app.Activity
+    val exitHint = LocalLanguageContext.current.getString(com.joe.mepe.R.string.exit_hint)
+    var lastBackAt by remember { mutableStateOf(0L) }
+    androidx.activity.compose.BackHandler(enabled = isMain) {
+        val now = System.currentTimeMillis()
+        if (now - lastBackAt < 2000L) {
+            activity?.finish()
+        } else {
+            lastBackAt = now
+            android.widget.Toast.makeText(activity, exitHint, android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     Scaffold(
@@ -199,6 +217,7 @@ fun AppRoot(onLanguageChanged: (String) -> Unit = {}) {
                     Routes.REVIEW -> ReviewScreen(nav)
                     Routes.SETTINGS -> SettingsScreen(nav, onLanguageChanged)
                     Routes.MODULES -> com.joe.mepe.ui.modules.ModulesScreen(nav)
+                    Routes.EXPENSES -> com.joe.mepe.ui.expenses.ExpensesScreen(nav)
                 }
             }
         }

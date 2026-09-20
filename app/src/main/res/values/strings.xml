@@ -3,6 +3,10 @@
     <string name="app_name">ME</string>
     <string name="widget_title">今日任务</string>
     <string name="widget_description">在桌面查看今天要做的任务和完成进度</string>
+    <string name="widget_no_tasks">无任务</string>
+    <string name="widget_empty_today">今天没有安排任务</string>
+    <string name="widget_more">还有 %1$d 项，点开查看</string>
+    <string name="widget_open_hint">打开应用查看</string>
     <string name="nav_tasks">任务</string>
     <string name="nav_goals">目标</string>
     <string name="nav_calendar">日历</string>
@@ -13,4 +17,17 @@
     <string name="language_system">跟随系统</string>
     <string name="language_zh">中文</string>
     <string name="language_en">English</string>
+    <string name="exit_hint">再滑一次退出</string>
+    <string name="shortcut_start">开始计时</string>
+    <string name="shortcut_stop">停止计时</string>
+    <string name="shortcut_widget">添加小部件</string>
+    <string name="shortcut_started">已开始计时 · %1$s</string>
+    <string name="shortcut_already_running">已在计时中</string>
+    <string name="shortcut_not_running">当前没有进行中的计时</string>
+    <string name="shortcut_stopped">计时已停止</string>
+    <string name="shortcut_no_tags">请先在应用的「时间」页创建计时标签</string>
+    <string name="shortcut_failed">操作失败，请打开应用重试</string>
+    <string name="widget_guide_title">添加「今日任务」小部件</string>
+    <string name="widget_guide_text">在桌面空白处长按 → 选择「小部件」（部分系统叫「添加工具」）→ 找到 ME → 将「今日任务」拖到桌面即可。小部件会随任务数据自动刷新。</string>
+    <string name="widget_guide_ok">知道了</string>
 </resources>

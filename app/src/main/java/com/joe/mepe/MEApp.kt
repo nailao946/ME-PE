@@ -21,6 +21,9 @@ class MEApp : Application() {
         JsonStore.init(this)
         LanguageService.init(this)
 
+        // 进程启动时兜底刷新桌面小组件（开机/被杀后重进，数据可能已变化）
+        try { com.joe.mepe.widget.TodayWidgetProvider.updateAll(this) } catch (_: Exception) { }
+
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_MEDICATION, "用药提醒", NotificationManager.IMPORTANCE_HIGH).apply {
